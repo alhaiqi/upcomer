@@ -1,0 +1,73 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Faculty {
+  id        String   @id @default(cuid())
+  code      String   @unique
+  name      String
+  courses   Course[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Professor {
+  id        String            @id @default(cuid())
+  name      String
+  courses   CourseProfessor[]
+  files     CourseFile[]
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+}
+
+model Course {
+  id         String            @id @default(cuid())
+  code       String            @unique
+  name       String
+  facultyId  String
+  faculty    Faculty           @relation(fields: [facultyId], references: [id])
+  professors CourseProfessor[]
+  files      CourseFile[]
+  createdAt  DateTime          @default(now())
+  updatedAt  DateTime          @updatedAt
+}
+
+model CourseProfessor {
+  courseId    String
+  professorId String
+  course      Course    @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  professor   Professor @relation(fields: [professorId], references: [id], onDelete: Cascade)
+
+  @@id([courseId, professorId])
+}
+
+enum FileCategory {
+  EXAM
+  MATERIAL
+}
+
+model CourseFile {
+  id               String       @id @default(cuid())
+  courseId         String
+  course           Course       @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  professorId      String?
+  professor        Professor?   @relation(fields: [professorId], references: [id], onDelete: SetNull)
+  title            String
+  originalFileName String
+  storageKey       String
+  category         FileCategory
+  year             Int?
+  session          String?
+  topic            String?
+  mimeType         String?
+  sizeBytes        Int?
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  @@index([courseId, category])
+}
