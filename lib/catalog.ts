@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { logError } from "@/lib/logger";
 
@@ -5,21 +6,28 @@ export const COURSES_PER_PAGE = 20;
 
 const normalize = (text: string) => text.replace(/\s+/g, "").toLowerCase();
 
-export async function getCatalogCourses({ query = "" }: { query?: string } = {}) {
+export async function getCatalogCourses({ query = "", facultyId = "", professorId = "" }: { query?: string; facultyId?: string; professorId?: string } = {}) {
   const search = query.trim();
+  const where: Prisma.CourseWhereInput = {
+    ...(search ? { OR: [
+      { code: { contains: search, mode: "insensitive" } },
+      { code: { contains: search.replace(/\s+/g, ""), mode: "insensitive" } },
+      { name: { contains: search, mode: "insensitive" } },
+    ] } : {}),
+    ...(facultyId ? { facultyId } : {}),
+    ...(professorId ? { professors: { some: { professorId } } } : {}),
+  };
   try {
     const courses = await db.course.findMany({
-      where: search ? { OR: [
-        { code: { contains: search, mode: "insensitive" } },
-        { code: { contains: search.replace(/\s+/g, ""), mode: "insensitive" } },
-        { name: { contains: search, mode: "insensitive" } },
-      ] } : undefined,
+      where,
       include: { faculty: true, professors: { include: { professor: true } } },
       orderBy: { code: "asc" },
     });
     return search ? rankCourses(courses, search) : courses;
   } catch (error) {
-    logError(search ? "course_search_failed" : "course_catalog_retrieval_failed", { errorType: error instanceof Error ? error.name : "Unknown" });
+    logError(search || facultyId || professorId ? "course_search_failed" : "course_catalog_retrieval_failed", {
+      facultyId: facultyId || undefined, professorId: professorId || undefined, errorType: error instanceof Error ? error.name : "Unknown",
+    });
     throw error;
   }
 }

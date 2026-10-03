@@ -14,15 +14,15 @@ describe("catalog service", () => {
     findMany.mockResolvedValue([{ id: "course-a" }, { id: "course-b" }]);
     expect(await getCatalogCourses()).toEqual([{ id: "course-a" }, { id: "course-b" }]);
     expect(findMany).toHaveBeenCalledWith({
-      where: undefined,
+      where: {},
       include: { faculty: true, professors: { include: { professor: true } } },
       orderBy: { code: "asc" },
     });
   });
   it.each(["", "   "])("does not filter when the search is %j", async query => {
     findMany.mockResolvedValue([]);
-    await getCatalogCourses({ query });
-    expect(findMany).toHaveBeenCalledWith(expect.objectContaining({ where: undefined }));
+    await getCatalogCourses({ query, facultyId: "", professorId: "" });
+    expect(findMany).toHaveBeenCalledWith(expect.objectContaining({ where: {} }));
   });
   it("returns an empty list when there are no courses", async () => {
     findMany.mockResolvedValue([]);
@@ -59,6 +59,39 @@ describe("catalog search", () => {
     findMany.mockRejectedValue(error);
     await expect(getCatalogCourses({ query: "networks" })).rejects.toBe(error);
     expect(logError).toHaveBeenCalledWith("course_search_failed", { errorType: "PrismaClientKnownRequestError" });
+  });
+});
+
+describe("catalog filters", () => {
+  const search = { OR: [
+    { code: { contains: "eece", mode: "insensitive" } },
+    { code: { contains: "eece", mode: "insensitive" } },
+    { name: { contains: "eece", mode: "insensitive" } },
+  ] };
+
+  it("filters by faculty", async () => {
+    findMany.mockResolvedValue([]);
+    await getCatalogCourses({ facultyId: "faculty-eng" });
+    expect(findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { facultyId: "faculty-eng" } }));
+  });
+  it("filters by professor through the course's professors", async () => {
+    findMany.mockResolvedValue([]);
+    await getCatalogCourses({ professorId: "prof-a" });
+    expect(findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { professors: { some: { professorId: "prof-a" } } } }));
+  });
+  it("combines the search text with both filters", async () => {
+    findMany.mockResolvedValue([]);
+    await getCatalogCourses({ query: "eece", facultyId: "faculty-eng", professorId: "prof-a" });
+    expect(findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { ...search, facultyId: "faculty-eng", professors: { some: { professorId: "prof-a" } } },
+    }));
+  });
+  it("logs a failed filtered query with the filter IDs and rethrows", async () => {
+    const error = new Error("timeout");
+    error.name = "PrismaClientKnownRequestError";
+    findMany.mockRejectedValue(error);
+    await expect(getCatalogCourses({ facultyId: "faculty-eng" })).rejects.toBe(error);
+    expect(logError).toHaveBeenCalledWith("course_search_failed", { facultyId: "faculty-eng", professorId: undefined, errorType: "PrismaClientKnownRequestError" });
   });
 });
 
