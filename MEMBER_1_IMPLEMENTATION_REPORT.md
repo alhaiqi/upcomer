@@ -99,9 +99,30 @@ No email, password, or session token is ever logged, following the existing rule
 
 `npm run lint` is clean and `npm run build` succeeds, with `/signup`, `/login`, `/my-courses`, and the middleware all registered.
 
-### Not run on this machine
+### Verified against a real database
 
-**`npm run db:migrate`, `npm run db:seed`, and `npm run test:e2e` have not been run.** This machine has no working PostgreSQL server (port 5432 closed, no server service, `psql` missing from the PostgreSQL install), so no real database was available. The migration SQL was therefore generated with `prisma migrate diff --from-schema-datamodel … --to-schema-datamodel … --script`, which produces exactly what `prisma migrate dev` would have written, and placed in `prisma/migrations/20261004000000_auth_my_courses/migration.sql`. **Whoever has a local database should run `npm run db:migrate` and `npm run db:seed` first, then `npm run test:e2e`, before this branch is merged.** `npx prisma generate`, `npx tsc --noEmit`, `npm run lint`, `npm run build`, and `npm test` all pass here.
+`npm run db:migrate` applied `20260930000000_init` and `20261004000000_auth_my_courses` cleanly, `npm run db:seed` ran twice with no duplicate (one admin row, three courses, seven files), and **`npm run test:e2e` passes all 12 Playwright tests**: my 8, Member 2's 3, and Member 3's 1. Member 2's and Member 3's flows were re-run specifically to confirm the new header and the Add button on the course page break nothing.
+
+Two claims were also checked directly against PostgreSQL rather than only against mocks:
+
+- **Duplicate addition under a race.** Three concurrent inserts of the same `(userId, courseId)` produced one row and two `P2002` errors, which is what `addCourseToMyCourses` turns into "Already in My Courses."
+- **Cascades.** Deleting a user removed that user's `Session` and `UserCourse` rows.
+
+The dev-server console during the e2e run showed `login_failed`, `signup_failed`, and `unauthorized_access` lines with only a `reason`, a `userId`, a `route`, and a `role` — no email, password, or token, as required.
+
+`npx prisma generate`, `npx tsc --noEmit`, `npm run lint`, `npm run build`, and `npm test` all pass as well.
+
+One real bug was found this way: the first generated `migration.sql` had Prisma's `warn` lines about `package.json#prisma` at the top, because the SQL was captured from a command that writes that warning to the same stream. It failed with `ERROR: syntax error at or near "warn"` on the shadow database and is fixed; the committed file starts at `-- CreateEnum`.
+
+### How the database was run here, without Docker
+
+This machine has no PostgreSQL server: the install under `C:\Program Files\PostgreSQL` has only orphaned `data` folders, no binaries and no service. Docker was not used. Instead, real PostgreSQL 18.4 binaries were run as a plain user process from a scratch folder with the `embedded-postgres` package, on port 5433:
+
+1. `npm install embedded-postgres` in a scratch directory outside the repository, which downloads the `windows-x64` binaries.
+2. `initdb -U postgres --pwfile=… -E UTF8 --locale=C` into a scratch data folder, then `pg_ctl -D … -o "-p 5433" start`. PostgreSQL refuses to run from an elevated shell, so both commands were launched through `runas /trustlevel:0x20000`, which drops administrator rights.
+3. `DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:5433/upcomer?schema=public"` in `.env`. Prisma created the database itself on the first `migrate dev`.
+
+Nothing about this is required by the project: anyone with an ordinary local PostgreSQL on 5432 just uses the `.env.example` value. It is written down only so the result is reproducible, since this is the first time any Sprint 1 branch has been run against a real database.
 
 ## Handoff
 
@@ -146,5 +167,5 @@ Both log `unauthorized_access` with the route and role. `requireAdmin` sends a l
 - **Shared files I changed:** `lib/logger.ts` (seven events, appended), `app/globals.css` (`.site-nav`, `.form`, `.field`, `.inline-form`, `.notice`, and a flex rule on the existing `.site-header`, all appended), `app/layout.tsx` (header links and the logout form; the layout is now an async server component), `prisma/seed.ts` (a `seedAdmin()` function and one call at the end of `main`), `.env.example` (`ADMIN_EMAIL`, `ADMIN_PASSWORD`, `ADMIN_NAME`, `SIGNUP_EMAIL_DOMAIN`), `README.md` (new routes, a Member 1 section, and the stale intro sentence Member 2 flagged), and `app/courses/[courseId]/page.tsx` (Member 3's file: the Add button and confirmation).
 - **Nobody's existing tests break.** `app/courses/[courseId]/page.tsx` takes `searchParams` as an optional prop, so Member 3's `tests/unit/course-pages.test.tsx` passes unchanged, and no page that Members 2, 3, or 5 test now requires a login. **No shared Playwright login fixture is needed** as long as the team keeps browsing, search, course pages, and `/files/:id` open to visitors. If the team decides browsing must require a login, that fixture becomes necessary and every existing e2e test will need it, so please get that decision made explicitly.
 - **US-95 (CI) still does not exist.** There is no `.github/workflows`, so the "CI green" row of the Definition of Done cannot be met by anyone yet. The commands a workflow needs are `npm ci`, `npx prisma generate`, `npm run lint`, `npm test`, `npm run build`, and `npm run test:e2e` against a Postgres service container with `npm run db:migrate && npm run db:seed`. I can write it if US-95 is assigned to me.
-- **Not verified against a real database.** See "Not run on this machine" above; the migration, seed, and e2e suite need one run before merge.
+- **Verified against a real database.** The migration, the seed, and all 12 e2e tests, including Members 2's and 3's, were run and pass. See "Verified against a real database" above for the setup used, which needs no Docker.
 - **Still open:** Member 2's cross-test of US-01/02/07, code review, and my own cross-test of Member 5's US-70/71 uploads, which needs `feature/admin-uploads` checked out against a working database.
