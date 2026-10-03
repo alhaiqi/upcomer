@@ -24,6 +24,19 @@ export async function getCatalogCourses({ query = "" }: { query?: string } = {})
   }
 }
 
+export async function getCatalogFilterOptions() {
+  try {
+    const [faculties, professors] = await Promise.all([
+      db.faculty.findMany({ select: { id: true, name: true }, orderBy: { name: "asc" } }),
+      db.professor.findMany({ select: { id: true, name: true }, orderBy: { name: "asc" } }),
+    ]);
+    return { faculties, professors };
+  } catch (error) {
+    logError("catalog_filter_options_retrieval_failed", { errorType: error instanceof Error ? error.name : "Unknown" });
+    throw error;
+  }
+}
+
 export function rankCourses<T extends { code: string }>(courses: T[], query: string) {
   const search = normalize(query);
   const rank = (code: string) => normalize(code) === search ? 0 : normalize(code).startsWith(search) ? 1 : 2;

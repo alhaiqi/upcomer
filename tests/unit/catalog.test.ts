@@ -1,11 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { findMany, logError } = vi.hoisted(() => ({ findMany: vi.fn(), logError: vi.fn() }));
-vi.mock("@/lib/db", () => ({ db: { course: { findMany } } }));
+const { findMany, findFaculties, findProfessors, logError } = vi.hoisted(() => ({
+  findMany: vi.fn(), findFaculties: vi.fn(), findProfessors: vi.fn(), logError: vi.fn(),
+}));
+vi.mock("@/lib/db", () => ({ db: { course: { findMany }, faculty: { findMany: findFaculties }, professor: { findMany: findProfessors } } }));
 vi.mock("@/lib/logger", () => ({ logError }));
-import { COURSES_PER_PAGE, getCatalogCourses, paginateCourses, rankCourses } from "@/lib/catalog";
+import { COURSES_PER_PAGE, getCatalogCourses, getCatalogFilterOptions, paginateCourses, rankCourses } from "@/lib/catalog";
 
-beforeEach(() => { findMany.mockReset(); logError.mockReset(); });
+beforeEach(() => { findMany.mockReset(); findFaculties.mockReset(); findProfessors.mockReset(); logError.mockReset(); });
 
 describe("catalog service", () => {
   it("returns every course with its faculty and professors, ordered by code", async () => {
@@ -97,5 +99,34 @@ describe("catalog pagination", () => {
   });
   it("has one empty page when there are no courses", () => {
     expect(paginateCourses([], "4")).toEqual({ courses: [], page: 1, totalPages: 1 });
+  });
+});
+
+describe("catalog filter options", () => {
+  it("returns faculties and professors by name with only their ID and name", async () => {
+    findFaculties.mockResolvedValue([{ id: "faculty-fas", name: "Faculty of Arts and Sciences" }, { id: "faculty-eng", name: "Faculty of Engineering" }]);
+    findProfessors.mockResolvedValue([{ id: "prof-a", name: "Professor A" }]);
+    expect(await getCatalogFilterOptions()).toEqual({
+      faculties: [{ id: "faculty-fas", name: "Faculty of Arts and Sciences" }, { id: "faculty-eng", name: "Faculty of Engineering" }],
+      professors: [{ id: "prof-a", name: "Professor A" }],
+    });
+    expect(findFaculties).toHaveBeenCalledWith({ select: { id: true, name: true }, orderBy: { name: "asc" } });
+    expect(findProfessors).toHaveBeenCalledWith({ select: { id: true, name: true }, orderBy: { name: "asc" } });
+  });
+  it("returns empty lists when there are no faculties or professors", async () => {
+    findFaculties.mockResolvedValue([]);
+    findProfessors.mockResolvedValue([]);
+    expect(await getCatalogFilterOptions()).toEqual({ faculties: [], professors: [] });
+  });
+  it.each([
+    ["faculties", findFaculties, findProfessors],
+    ["professors", findProfessors, findFaculties],
+  ])("logs and rethrows when loading %s fails", async (_name, failing, working) => {
+    const error = new Error("connection refused");
+    error.name = "PrismaClientInitializationError";
+    failing.mockRejectedValue(error);
+    working.mockResolvedValue([]);
+    await expect(getCatalogFilterOptions()).rejects.toBe(error);
+    expect(logError).toHaveBeenCalledWith("catalog_filter_options_retrieval_failed", { errorType: "PrismaClientInitializationError" });
   });
 });
