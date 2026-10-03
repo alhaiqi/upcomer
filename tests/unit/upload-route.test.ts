@@ -1,0 +1,79 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const { saveUpload } = vi.hoisted(() => ({ saveUpload: vi.fn() }));
+vi.mock("@/lib/db", () => ({ db: {} }));
+vi.mock("@/lib/uploads", async original => ({ ...(await original<typeof import("@/lib/uploads")>()), saveUpload }));
+import { POST } from "@/app/api/admin/uploads/route";
+import { UploadError } from "@/lib/uploads";
+
+const pdf = Buffer.from("%PDF-1.4\nexample");
+function upload(fields: Record<string, string> = {}, file: File | null = new File([pdf], "final.pdf")) {
+  const form = new FormData();
+  for (const [name, value] of Object.entries({ category: "EXAM", courseId: "course-a", title: "Final Exam", ...fields })) form.set(name, value);
+  if (file) form.set("file", file);
+  return new Request("http://localhost/api/admin/uploads", { method: "POST", body: form });
+}
+
+let errors: ReturnType<typeof vi.spyOn>;
+const logged = () => errors.mock.calls.map(call => JSON.parse(String(call[0])));
+beforeEach(() => {
+  errors = vi.spyOn(console, "error").mockImplementation(() => {});
+  saveUpload.mockReset().mockResolvedValue({ id: "file new", title: "Final Exam", category: "EXAM", courseId: "course-a" });
+});
+afterEach(() => errors.mockRestore());
+
+describe("admin upload route", () => {
+  it("stores a valid upload and returns the new file", async () => {
+    const response = await POST(upload({ year: "2025", session: "Final" }));
+    expect(response.status).toBe(201);
+    expect(await response.json()).toEqual({ file: { id: "file new", title: "Final Exam", category: "EXAM", courseId: "course-a", url: "/files/file%20new" } });
+    const input = saveUpload.mock.calls[0][0];
+    expect(input).toMatchObject({ courseId: "course-a", category: "EXAM", title: "Final Exam", year: 2025, session: "Final", fileName: "final.pdf" });
+    expect(Buffer.from(input.bytes)).toEqual(pdf);
+    expect(errors).not.toHaveBeenCalled();
+  });
+  it("rejects missing fields without saving", async () => {
+    const response = await POST(upload({ title: "" }));
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ reason: "invalid_fields", error: "Enter a title." });
+    expect((await POST(upload({}, null))).status).toBe(400);
+    expect(saveUpload).not.toHaveBeenCalled();
+  });
+  it("returns the service's status for an invalid file and logs the rejection", async () => {
+    saveUpload.mockRejectedValue(new UploadError("unsupported_type", "Unsupported file type."));
+    const response = await POST(upload({}, new File(["MZ"], "virus.exe")));
+    expect(response.status).toBe(415);
+    expect(await response.json()).toEqual({ reason: "unsupported_type", error: "Unsupported file type." });
+    expect(logged()).toEqual([expect.objectContaining({ event: "upload_rejected", reason: "unsupported_type", courseId: "course-a", resourceCategory: "EXAM" })]);
+    expect(JSON.stringify(logged())).not.toContain("virus.exe");
+  });
+  it("returns 404 for an unknown course", async () => {
+    saveUpload.mockRejectedValue(new UploadError("course_not_found", "The selected course doesn't exist."));
+    expect((await POST(upload())).status).toBe(404);
+  });
+  it("rejects an oversized request before reading it", async () => {
+    const request = new Request("http://localhost/api/admin/uploads", { method: "POST", headers: { "content-length": String(50 * 1024 * 1024) }, body: "x" });
+    const response = await POST(request);
+    expect(response.status).toBe(413);
+    expect(saveUpload).not.toHaveBeenCalled();
+  });
+  it("rejects a body that is not a form", async () => {
+    const response = await POST(new Request("http://localhost/api/admin/uploads", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }));
+    expect(response.status).toBe(400);
+    expect((await response.json()).reason).toBe("invalid_form");
+  });
+  it("does not log storage failures twice", async () => {
+    saveUpload.mockRejectedValue(new UploadError("storage_failed", "The file could not be stored. Please try again."));
+    const response = await POST(upload());
+    expect(response.status).toBe(500);
+    expect(errors).not.toHaveBeenCalled();
+  });
+  it("hides unexpected errors and logs them", async () => {
+    saveUpload.mockRejectedValue(new Error("connection string postgres://secret"));
+    const response = await POST(upload());
+    expect(response.status).toBe(500);
+    expect(JSON.stringify(await response.json())).not.toContain("secret");
+    expect(logged()).toEqual([expect.objectContaining({ event: "upload_failed", courseId: "course-a", errorType: "Error" })]);
+    expect(JSON.stringify(logged())).not.toContain("secret");
+  });
+});

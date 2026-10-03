@@ -6,3 +6,5 @@ test-results/
 .env
 .env.local
 *.tsbuildinfo
+public/uploads/exams/
+public/uploads/materials/

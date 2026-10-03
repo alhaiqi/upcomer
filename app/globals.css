@@ -16,3 +16,13 @@ h2 { font-size: 1.4rem; margin: 2rem 0 1rem; }
 .button:hover { background: #174474; }
 .back { display: inline-block; margin-bottom: 1.6rem; color: #20599b; }
 .list { display: grid; gap: 1rem; }
+.form { display: grid; gap: 1rem; }
+.form label { display: grid; gap: .35rem; font-weight: 700; }
+.form label .muted { font-weight: 400; font-size: .9rem; }
+.form input, .form select { padding: .7rem 1rem; border: 1px solid #dce3ec; border-radius: 8px; font: inherit; font-weight: 400; background: white; color: inherit; }
+.form .button { justify-self: start; margin-top: 0; border: 0; font: inherit; font-weight: 700; cursor: pointer; }
+.form .button:disabled { background: #8ea3bb; cursor: default; }
+.form-error, .form-success { margin: 0; border-radius: 8px; padding: .7rem 1rem; }
+.form-error { background: #fdecec; color: #8f1d1d; }
+.form-success { background: #e9f6ee; color: #17603a; }
+.form-success a { color: inherit; font-weight: 700; }
