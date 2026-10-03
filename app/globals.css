@@ -16,3 +16,5 @@ h2 { font-size: 1.4rem; margin: 2rem 0 1rem; }
 .button:hover { background: #174474; }
 .back { display: inline-block; margin-bottom: 1.6rem; color: #20599b; }
 .list { display: grid; gap: 1rem; }
+.pagination { display: flex; align-items: center; gap: 1rem; margin-top: 1.5rem; }
+.pagination .button { margin-top: 0; }
