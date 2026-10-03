@@ -16,3 +16,10 @@ h2 { font-size: 1.4rem; margin: 2rem 0 1rem; }
 .button:hover { background: #174474; }
 .back { display: inline-block; margin-bottom: 1.6rem; color: #20599b; }
 .list { display: grid; gap: 1rem; }
+.pagination { display: flex; align-items: center; gap: 1rem; margin-top: 1.5rem; }
+.pagination .button { margin-top: 0; }
+.search { display: flex; flex-wrap: wrap; gap: .75rem; margin: 1.5rem 0; }
+.search input, .search select { padding: .7rem 1rem; border: 1px solid #dce3ec; border-radius: 8px; font: inherit; background: white; color: inherit; }
+.search input { flex: 1 1 100%; }
+.search select { flex: 1 1 12rem; }
+.search .button { margin-top: 0; border: 0; font: inherit; font-weight: 700; cursor: pointer; }
