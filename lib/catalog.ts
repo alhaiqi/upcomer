@@ -3,16 +3,31 @@ import { logError } from "@/lib/logger";
 
 export const COURSES_PER_PAGE = 20;
 
-export async function getCatalogCourses() {
+const normalize = (text: string) => text.replace(/\s+/g, "").toLowerCase();
+
+export async function getCatalogCourses({ query = "" }: { query?: string } = {}) {
+  const search = query.trim();
   try {
-    return await db.course.findMany({
+    const courses = await db.course.findMany({
+      where: search ? { OR: [
+        { code: { contains: search, mode: "insensitive" } },
+        { code: { contains: search.replace(/\s+/g, ""), mode: "insensitive" } },
+        { name: { contains: search, mode: "insensitive" } },
+      ] } : undefined,
       include: { faculty: true, professors: { include: { professor: true } } },
       orderBy: { code: "asc" },
     });
+    return search ? rankCourses(courses, search) : courses;
   } catch (error) {
-    logError("course_catalog_retrieval_failed", { errorType: error instanceof Error ? error.name : "Unknown" });
+    logError(search ? "course_search_failed" : "course_catalog_retrieval_failed", { errorType: error instanceof Error ? error.name : "Unknown" });
     throw error;
   }
+}
+
+export function rankCourses<T extends { code: string }>(courses: T[], query: string) {
+  const search = normalize(query);
+  const rank = (code: string) => normalize(code) === search ? 0 : normalize(code).startsWith(search) ? 1 : 2;
+  return [...courses].sort((a, b) => rank(a.code) - rank(b.code));
 }
 
 export function paginateCourses<T>(courses: T[], requestedPage?: string, pageSize = COURSES_PER_PAGE) {

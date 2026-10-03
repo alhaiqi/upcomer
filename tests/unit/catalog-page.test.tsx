@@ -13,7 +13,7 @@ const manyCourses = Array.from({ length: 45 }, (_, index) => {
   const number = String(index + 1).padStart(2, "0");
   return { id: `course-${number}`, code: `TEST1${number}`, name: `Test Course ${number}`, faculty: { name: "Faculty of Engineering" }, professors: [] };
 });
-const searchParams = (params: { page?: string } = {}) => ({ searchParams: Promise.resolve(params) });
+const searchParams = (params: { page?: string; q?: string } = {}) => ({ searchParams: Promise.resolve(params) });
 
 beforeEach(() => { getCatalogCourses.mockReset(); });
 
@@ -65,5 +65,31 @@ describe("catalog page", () => {
     expect(html).toContain("Test Course 45");
     expect(html).toContain("Page 3 of 3");
     expect(html).not.toContain("Next");
+  });
+  it("shows a search box and loads every course when nothing is searched", async () => {
+    getCatalogCourses.mockResolvedValue(courses);
+    const html = renderToStaticMarkup(await CatalogPage(searchParams()));
+    expect(html).toContain('name="q"');
+    expect(html).toContain('value=""');
+    expect(getCatalogCourses).toHaveBeenCalledWith({ query: "" });
+  });
+  it("searches with the trimmed text and keeps it in the search box", async () => {
+    getCatalogCourses.mockResolvedValue([courses[0]]);
+    const html = renderToStaticMarkup(await CatalogPage(searchParams({ q: "  eece 350 " })));
+    expect(getCatalogCourses).toHaveBeenCalledWith({ query: "eece 350" });
+    expect(html).toContain('value="eece 350"');
+    expect(html).toContain("Computer Networks");
+  });
+  it("shows a no-results message when a search matches nothing", async () => {
+    getCatalogCourses.mockResolvedValue([]);
+    const html = renderToStaticMarkup(await CatalogPage(searchParams({ q: "zzz" })));
+    expect(html).toContain("No courses found.");
+    expect(html).not.toContain("No courses are available yet.");
+  });
+  it("keeps the search in the page links", async () => {
+    getCatalogCourses.mockResolvedValue(manyCourses);
+    const html = renderToStaticMarkup(await CatalogPage(searchParams({ q: "test course", page: "2" })));
+    expect(html).toContain('href="/?q=test+course&amp;page=1"');
+    expect(html).toContain('href="/?q=test+course&amp;page=3"');
   });
 });

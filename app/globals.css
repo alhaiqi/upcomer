@@ -18,3 +18,6 @@ h2 { font-size: 1.4rem; margin: 2rem 0 1rem; }
 .list { display: grid; gap: 1rem; }
 .pagination { display: flex; align-items: center; gap: 1rem; margin-top: 1.5rem; }
 .pagination .button { margin-top: 0; }
+.search { display: flex; gap: .75rem; margin: 1.5rem 0; }
+.search input { flex: 1; padding: .7rem 1rem; border: 1px solid #dce3ec; border-radius: 8px; font: inherit; background: white; color: inherit; }
+.search .button { margin-top: 0; border: 0; font: inherit; font-weight: 700; cursor: pointer; }
