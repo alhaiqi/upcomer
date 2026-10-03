@@ -85,7 +85,7 @@ No email, password, or session token is ever logged, following the existing rule
 
 ## Tests
 
-`npm test` — **175 unit and component tests pass**, 15 files, including the 10 files that already existed.
+`npm test` — **175 unit and component tests pass** across 15 files: 100 new ones in the 6 files below, plus the 75 that already existed, all still green.
 
 | File | Covers |
 | --- | --- |
@@ -93,7 +93,7 @@ No email, password, or session token is ever logged, following the existing rule
 | `tests/unit/auth-actions.test.ts` (18) | Sign-up, login, logout, and add-to-My-Courses actions, including `next` preservation and rejection of off-site values |
 | `tests/unit/my-courses.test.ts` (7) | Add, unknown course, `P2002` as "already added", list ordering and includes, logging |
 | `tests/unit/auth-pages.test.tsx` (25) | Sign-up and login forms and every error message, My Courses page and empty state, page-level protection, header links for both states, and that logout is never a link |
-| `tests/unit/add-to-my-courses.test.tsx` (6) | The button and confirmations on the course page, and that Member 3's resource sections still render |
+| `tests/unit/add-to-my-courses.test.tsx` (5) | The button and confirmations on the course page, and that Member 3's resource sections still render |
 | `tests/unit/middleware.test.ts` (4) | The redirect, the preserved query string, pass-through with a cookie, and the matcher list |
 | `tests/e2e/auth-my-courses.spec.ts` (8) | The full journey, duplicate sign-up, case-insensitive duplicate, short password, protected `/my-courses`, add-while-logged-out and return, the open-redirect attempt, and that browsing stays open |
 
