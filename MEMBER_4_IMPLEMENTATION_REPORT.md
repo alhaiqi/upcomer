@@ -234,8 +234,10 @@ Titles, topics, and error messages are never logged; unit tests assert this. Upl
     - `professor_not_found` is gone; `professor_not_assigned` covers it.
     - A professor who exists but doesn't teach the course is now refused; before, any professor was accepted.
   - `getUploadOptions` is unchanged and is reused by my pages. The pages also call `getTermOptions()`.
-  - **Your e2e upload tests never delete the files they upload.** The dev database had 28 copies of "Final" exams from earlier runs, migrated fine. Consider an `afterAll` cleanup like the catalog and file specs.
-  - **The README paragraph saying uploads are "not access-controlled yet" is out of date** since `fix/admin-upload-auth`. I left your section's wording otherwise as it was.
+  - **Your e2e upload tests now clean up after themselves**, at the team leader's request. `admin-uploads.spec.ts` gives its three uploads stamped titles. An `afterAll` deletes those `CourseFile` rows and their stored copies under `FILE_STORAGE_ROOT`. It only deletes keys of the form `exams/<name>` or `materials/<name>` inside the root, never the committed fixtures.
+    - Earlier runs had left 55 test uploads in the dev database (28 "Uploaded Exam …" and 27 "Uploaded Material …"; my earlier note said 28 because it counted only exams). They were deleted, matched by title pattern and never seeded `file-*` IDs, along with their 49 stored files; 6 rows had no file on this disk. The database now has the 7 seeded files.
+    - Before and after each of three e2e runs, the database had 7 `CourseFile` rows and 0 stored uploads.
+  - **The README now says uploads are admin-only** (fixed in `fix/admin-upload-auth`), replacing "not access-controlled yet".
 - **Member 3 (course pages):** `getCourseFiles` includes `term`. `ResourceList` shows "Term: …" and "Type: …" instead of "Session: …".
 - **Member 2:** No change.
 - **Member 1:** No change; access uses `requireAdmin` as before.
@@ -259,4 +261,4 @@ No CSS was needed.
 - A ranking or analysis feature that uses the course, term, and type (none exists yet).
 - `/admin/files` has no pagination. It lists all files, or one course's files with the filter.
 - Deleting files, and editing a file's title or category, if the team wants them.
-- Member 5's upload e2e cleanup and the stale README note (above).
+- Member 1: `a login link cannot send a student off the site after logging in` is flaky. `signUp()` navigates to `/login` without waiting for the sign-up to finish, so the navigation can cancel it. It failed once in three runs with `invalid_credentials` for an unknown email. The fix is to wait for `/login?registered=1` in `signUp()`. Member 1's and my catalog e2e specs also leave their test students in the database: about 6 users per run.
