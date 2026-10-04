@@ -18,7 +18,7 @@ async function getCourseFiles(courseId: string, category: FileCategory) {
   try {
     return await db.courseFile.findMany({
       where: { courseId, category },
-      include: { professor: true },
+      include: { professor: true, term: true },
       orderBy: [{ year: "desc" }, { createdAt: "desc" }],
     });
   } catch (error) {
