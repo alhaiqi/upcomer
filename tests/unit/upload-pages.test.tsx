@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 
-const { getUploadOptions } = vi.hoisted(() => ({ getUploadOptions: vi.fn() }));
+const { getUploadOptions, requireAdmin } = vi.hoisted(() => ({ getUploadOptions: vi.fn(), requireAdmin: vi.fn() }));
 vi.mock("@/lib/uploads", () => ({ getUploadOptions }));
+vi.mock("@/lib/auth", () => ({ requireAdmin }));
 import UploadsPage from "@/app/admin/uploads/page";
 import UploadExamPage from "@/app/admin/uploads/exams/page";
 import UploadMaterialPage from "@/app/admin/uploads/materials/page";
@@ -13,11 +14,14 @@ const courses = [
 ];
 const props = (courseId?: string) => ({ searchParams: Promise.resolve({ courseId }) });
 
-beforeEach(() => { getUploadOptions.mockReset().mockResolvedValue(courses); });
+beforeEach(() => {
+  getUploadOptions.mockReset().mockResolvedValue(courses);
+  requireAdmin.mockReset().mockResolvedValue({ id: "admin-1", role: "ADMIN" });
+});
 
 describe("admin upload pages", () => {
-  it("links to both upload forms", () => {
-    const html = renderToStaticMarkup(UploadsPage());
+  it("links to both upload forms", async () => {
+    const html = renderToStaticMarkup(await UploadsPage());
     expect(html).toContain("/admin/uploads/exams");
     expect(html).toContain("/admin/uploads/materials");
   });
@@ -57,5 +61,25 @@ describe("admin upload pages", () => {
   it("lets a retrieval failure reach the error page", async () => {
     getUploadOptions.mockRejectedValue(new Error("database down"));
     await expect(UploadExamPage(props())).rejects.toThrow("database down");
+  });
+});
+
+describe("admin upload page access", () => {
+  it("checks for an admin on every upload page", async () => {
+    await UploadsPage();
+    await UploadExamPage(props());
+    await UploadMaterialPage(props());
+    expect(requireAdmin.mock.calls).toEqual([["/admin/uploads"], ["/admin/uploads/exams"], ["/admin/uploads/materials"]]);
+  });
+  it("shows a student the not-found page without loading the course list", async () => {
+    requireAdmin.mockRejectedValue(new Error("NEXT_NOT_FOUND"));
+    await expect(UploadsPage()).rejects.toThrow("NEXT_NOT_FOUND");
+    await expect(UploadExamPage(props())).rejects.toThrow("NEXT_NOT_FOUND");
+    await expect(UploadMaterialPage(props())).rejects.toThrow("NEXT_NOT_FOUND");
+    expect(getUploadOptions).not.toHaveBeenCalled();
+  });
+  it("sends a visitor to the login page", async () => {
+    requireAdmin.mockRejectedValue(new Error("NEXT_REDIRECT /login?next=%2Fadmin%2Fuploads%2Fexams"));
+    await expect(UploadExamPage(props())).rejects.toThrow("NEXT_REDIRECT /login?next=%2Fadmin%2Fuploads%2Fexams");
   });
 });

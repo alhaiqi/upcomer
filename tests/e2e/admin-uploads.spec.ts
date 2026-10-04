@@ -1,7 +1,10 @@
 import { expect, test } from "@playwright/test";
 import { readFile } from "node:fs/promises";
+import { logInAsAdmin } from "./fixtures";
 
 const fixture = "public/uploads/eece350-final-2025.pdf";
+
+test.beforeEach(async ({ page }) => logInAsAdmin(page));
 
 test("an uploaded exam appears on its course and opens", async ({ page, request }) => {
   const title = `Uploaded Exam ${Date.now()}`;
@@ -59,4 +62,11 @@ test("invalid and corrupt files are refused with a message", async ({ page }) =>
 
   await page.goto("/courses/course-eece350/exams");
   await expect(page.getByText(title)).toHaveCount(0);
+});
+
+test("the upload endpoint refuses a request without an admin session", async ({ request }) => {
+  // The request fixture has its own cookie jar, so it is not logged in as the page is.
+  const response = await request.post("/api/admin/uploads", { multipart: { category: "EXAM", courseId: "course-eece350", title: "Anonymous upload" } });
+  expect(response.status()).toBe(403);
+  expect((await response.json()).reason).toBe("forbidden");
 });

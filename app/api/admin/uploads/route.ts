@@ -1,3 +1,4 @@
+import { getAdminUser } from "@/lib/auth";
 import { logError } from "@/lib/logger";
 import { MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL } from "@/lib/upload-rules";
 import { parseUploadForm, saveUpload, UploadError } from "@/lib/uploads";
@@ -10,6 +11,7 @@ const FORM_OVERHEAD_BYTES = 1024 * 1024;
 const failure = (reason: string, error: string, status: number) => Response.json({ reason, error }, { status });
 
 export async function POST(request: Request) {
+  if (!(await getAdminUser("POST /api/admin/uploads"))) return failure("forbidden", "Only an admin can upload files.", 403);
   if (Number(request.headers.get("content-length")) > MAX_UPLOAD_BYTES + FORM_OVERHEAD_BYTES) {
     logError("upload_rejected", { reason: "file_too_large" });
     return failure("file_too_large", `The file is larger than ${MAX_UPLOAD_LABEL}.`, 413);
