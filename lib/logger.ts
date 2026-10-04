@@ -106,7 +106,10 @@ export function errorCode(error: unknown): string | undefined {
 // Persistence is loaded lazily and only on the Node runtime, so this module never pulls Prisma into edge code.
 type Store = { saveLogEntry: (line: LogLine) => Promise<void> };
 let persistEnabled = process.env.NODE_ENV !== "test" && process.env.LOG_PERSIST !== "off";
-let loadStore: () => Promise<Store> = () => import("@/lib/log-store");
+// Unit tests can never reach the real store, even if a test switches persistence on without passing its own.
+export const defaultStoreLoader = (): Promise<Store> =>
+  process.env.NODE_ENV === "test" ? Promise.reject(new Error("The real log store is not loaded in tests")) : import("@/lib/log-store");
+let loadStore: () => Promise<Store> = defaultStoreLoader;
 let storePromise: Promise<Store> | undefined;
 let warnedUnavailable = false;
 

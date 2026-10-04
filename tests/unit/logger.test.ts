@@ -3,13 +3,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const { saveLogEntry, getOriginalFile } = vi.hoisted(() => ({ saveLogEntry: vi.fn(), getOriginalFile: vi.fn() }));
 vi.mock("@/lib/log-store", () => ({ saveLogEntry }));
 vi.mock("@/lib/files", () => ({ getOriginalFile, FileUnavailableError: class FileUnavailableError extends Error {} }));
-import { configureLogger, errorCode, EVENT_LEVELS, levelOf, logError, MAX_VALUE_LENGTH, sanitizeContext, type LogEvent } from "@/lib/logger";
+import { configureLogger, defaultStoreLoader, errorCode, EVENT_LEVELS, levelOf, logError, MAX_VALUE_LENGTH, sanitizeContext, type LogEvent } from "@/lib/logger";
 import { GET } from "@/app/files/[fileId]/route";
 
 let errors: ReturnType<typeof vi.spyOn>;
 let warnings: ReturnType<typeof vi.spyOn>;
 const logged = () => errors.mock.calls.map(call => JSON.parse(String(call[0])));
 const settle = () => new Promise(resolve => setTimeout(resolve, 0));
+const mockStore = () => Promise.resolve({ saveLogEntry });
 
 beforeEach(() => {
   errors = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -21,7 +22,7 @@ afterEach(() => {
   errors.mockRestore();
   warnings.mockRestore();
   vi.unstubAllEnvs();
-  configureLogger({ persist: false, store: () => import("@/lib/log-store") });
+  configureLogger({ persist: false, store: defaultStoreLoader });
 });
 
 describe("severity levels", () => {
@@ -108,14 +109,21 @@ describe("persistence", () => {
     await settle();
     expect(saveLogEntry).not.toHaveBeenCalled();
   });
-  it("loads the store lazily and saves the sanitized line when enabled", async () => {
-    configureLogger({ persist: true });
+  it("never loads the real store under tests, even with persistence switched on", async () => {
+    configureLogger({ persist: true, store: defaultStoreLoader });
+    logError("upload_failed", {});
+    await vi.waitFor(() => expect(warnings).toHaveBeenCalledTimes(1));
+    expect(saveLogEntry).not.toHaveBeenCalled();
+    await expect(defaultStoreLoader()).rejects.toThrow("not loaded in tests");
+  });
+  it("saves the sanitized line through the store when enabled", async () => {
+    configureLogger({ persist: true, store: mockStore });
     logError("physical_file_not_found", { fileId: "file-missing", password: "x" });
     await vi.waitFor(() => expect(saveLogEntry).toHaveBeenCalled());
     expect(saveLogEntry).toHaveBeenCalledWith({ event: "physical_file_not_found", level: "error", timestamp: expect.any(String), fileId: "file-missing" });
   });
   it("is skipped on the edge runtime", async () => {
-    configureLogger({ persist: true });
+    configureLogger({ persist: true, store: mockStore });
     vi.stubEnv("NEXT_RUNTIME", "edge");
     logError("upload_failed", {});
     await settle();
@@ -123,7 +131,7 @@ describe("persistence", () => {
   });
   it("falls back to the console with one warning when the database fails, without recursing or throwing", async () => {
     saveLogEntry.mockRejectedValue(new Error("database down"));
-    configureLogger({ persist: true });
+    configureLogger({ persist: true, store: mockStore });
     expect(logError("upload_failed", { errorType: "Error" })).toBeUndefined();
     logError("course_search_failed", { errorType: "Error" });
     logError("logout_failed", { errorType: "Error" });
@@ -145,7 +153,7 @@ describe("persistence", () => {
   });
   it("does not make the caller wait for the database", () => {
     saveLogEntry.mockReturnValue(new Promise(() => {}));
-    configureLogger({ persist: true });
+    configureLogger({ persist: true, store: mockStore });
     const started = performance.now();
     logError("upload_failed", {});
     expect(performance.now() - started).toBeLessThan(50);
