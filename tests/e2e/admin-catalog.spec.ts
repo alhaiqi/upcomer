@@ -12,7 +12,7 @@ const created = {
   courseCode: `QAC${stamp}`, course: `Testing Course ${stamp}`,
 };
 
-// Member 2's discovery test expects only the seeded courses, so remove everything this file adds.
+// Remove everything this file adds so test entries do not pile up in the shared database.
 test.afterAll(async () => {
   const db = new PrismaClient();
   try {
@@ -109,7 +109,8 @@ test("a course code that already exists is refused, however it is written", asyn
   await expect(page.getByText("A course with code EECE350 already exists.")).toBeVisible();
 
   await page.goto("/?q=EECE350");
-  await expect(page.locator("article")).toHaveCount(1);
+  // Match by the exact code, since another course's name may mention EECE350.
+  await expect(page.locator("article").filter({ has: page.getByText("EECE350", { exact: true }) })).toHaveCount(1);
   await expect(page.getByText("Computer Networks Again")).toHaveCount(0);
 });
 
