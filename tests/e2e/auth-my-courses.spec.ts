@@ -1,14 +1,43 @@
 import { expect, test, type Page } from "@playwright/test";
+import { PrismaClient } from "@prisma/client";
 
 const password = "password123";
-const newEmail = () => `student-${Date.now()}-${Math.floor(Math.random() * 1000)}@mail.aub.edu`;
+// Every address handed out here is deleted after the file's tests, with its sessions and My Courses entries.
+const createdEmails: string[] = [];
+const newEmail = () => {
+  const email = `student-${Date.now()}-${Math.floor(Math.random() * 1000)}@mail.aub.edu`;
+  createdEmails.push(email);
+  return email;
+};
 
-async function signUp(page: Page, email: string) {
+test.afterAll(async () => {
+  const db = new PrismaClient();
+  try {
+    const users = await db.user.findMany({ where: { email: { in: createdEmails } }, select: { id: true } });
+    const userId = { in: users.map(user => user.id) };
+    await db.$transaction([
+      db.session.deleteMany({ where: { userId } }),
+      db.userCourse.deleteMany({ where: { userId } }),
+      db.user.deleteMany({ where: { id: userId } }),
+    ]);
+  } finally {
+    await db.$disconnect();
+  }
+});
+
+// Submits the sign-up form; for attempts that may be refused.
+async function submitSignUp(page: Page, email: string) {
   await page.goto("/signup");
   await page.getByLabel("Name").fill("Test Student");
   await page.getByLabel("Email").fill(email);
   await page.getByLabel("Password").fill(password);
   await page.getByRole("button", { name: "Create account" }).click();
+}
+
+// Creates a new account and waits until it exists, so a following navigation cannot cancel the sign-up request.
+async function signUp(page: Page, email: string) {
+  await submitSignUp(page, email);
+  await expect(page).toHaveURL(/\/login\?registered=1$/);
 }
 
 async function logIn(page: Page, email: string, secret = password) {
@@ -55,7 +84,7 @@ test("signing up twice with the same email says the account already exists", asy
   const email = newEmail();
   await signUp(page, email);
   await expect(page).toHaveURL(/\/login\?registered=1$/);
-  await signUp(page, email);
+  await submitSignUp(page, email);
   await expect(page).toHaveURL(/\/signup\?error=email_taken$/);
   await expect(page.getByText("An account with this email already exists.")).toBeVisible();
 });
@@ -63,7 +92,7 @@ test("signing up twice with the same email says the account already exists", asy
 test("the same email in a different case is one account, not two", async ({ page }) => {
   const email = newEmail();
   await signUp(page, email);
-  await signUp(page, email.toUpperCase());
+  await submitSignUp(page, email.toUpperCase());
   await expect(page.getByText("An account with this email already exists.")).toBeVisible();
 });
 
