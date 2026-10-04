@@ -12,7 +12,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
     <Link className="brand" href="/">Upcomer</Link>
     <nav className="site-nav" aria-label="Account">
       {user
-        ? <><Link href="/my-courses">My Courses</Link><form action={logOutAction}><button type="submit">Log out</button></form></>
+        ? <>{user.role === "ADMIN" && <Link href="/admin/catalog">Admin</Link>}<Link href="/my-courses">My Courses</Link><form action={logOutAction}><button type="submit">Log out</button></form></>
         : <><Link href="/login">Log in</Link><Link href="/signup">Sign up</Link></>}
     </nav>
   </header><main className="container">{children}</main></body></html>;

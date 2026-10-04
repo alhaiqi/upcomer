@@ -49,3 +49,10 @@ h2 { font-size: 1.4rem; margin: 2rem 0 1rem; }
 .inline-form .button { margin-top: 0; border: 0; font: inherit; font-weight: 700; cursor: pointer; }
 .notice { background: #e8f0fb; border: 1px solid #c3d6ef; border-radius: 8px; padding: .8rem 1rem; }
 .notice.error { background: #fdecec; border-color: #f0bcbc; color: #8c1f1f; }
+.field select { padding: .7rem 1rem; border: 1px solid #dce3ec; border-radius: 8px; font: inherit; font-weight: 400; background: white; color: inherit; }
+.checkbox-list { display: grid; gap: .5rem; margin: 0; padding: 0; border: 0; }
+.checkbox-list legend { margin-bottom: .35rem; padding: 0; font-weight: 700; }
+.checkbox-list label { display: flex; align-items: center; gap: .5rem; font-weight: 400; }
+.catalog-list { margin: 0; padding: 0; list-style: none; }
+.catalog-links { display: flex; flex-wrap: wrap; gap: 1rem; margin: 0; }
+.catalog-links a, .catalog-list a { color: #20599b; font-weight: 700; }
