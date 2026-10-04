@@ -10,6 +10,7 @@ const created = {
   facultyCode: `QA${stamp}`, faculty: `Faculty of Testing ${stamp}`,
   professor: `Professor Test ${stamp}`, term: `Term ${stamp}`,
   courseCode: `QAC${stamp}`, course: `Testing Course ${stamp}`,
+  studentEmail: `student-${stamp}@mail.aub.edu`,
 };
 
 // Remove everything this file adds so test entries do not pile up in the shared database.
@@ -20,6 +21,14 @@ test.afterAll(async () => {
     await db.faculty.deleteMany({ where: { code: created.facultyCode } });
     await db.professor.deleteMany({ where: { name: { startsWith: created.professor } } });
     await db.term.deleteMany({ where: { name: { startsWith: created.term } } });
+    const student = await db.user.findUnique({ where: { email: created.studentEmail }, select: { id: true } });
+    if (student) {
+      await db.$transaction([
+        db.session.deleteMany({ where: { userId: student.id } }),
+        db.userCourse.deleteMany({ where: { userId: student.id } }),
+        db.user.delete({ where: { id: student.id } }),
+      ]);
+    }
   } finally {
     await db.$disconnect();
   }
@@ -115,7 +124,7 @@ test("a course code that already exists is refused, however it is written", asyn
 });
 
 test("a student cannot reach catalog management", async ({ page }) => {
-  const email = `student-${Date.now()}@mail.aub.edu`;
+  const email = created.studentEmail;
   await page.goto("/signup");
   await page.getByLabel("Name").fill("Test Student");
   await page.getByLabel("Email").fill(email);
