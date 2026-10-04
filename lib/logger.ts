@@ -107,19 +107,26 @@ export function errorCode(error: unknown): string | undefined {
 type Store = { saveLogEntry: (line: LogLine) => Promise<void> };
 let persistEnabled = process.env.NODE_ENV !== "test" && process.env.LOG_PERSIST !== "off";
 let loadStore: () => Promise<Store> = () => import("@/lib/log-store");
+let storePromise: Promise<Store> | undefined;
 let warnedUnavailable = false;
 
 // For tests: switch persistence on or off, or swap the store.
 export function configureLogger(options: { persist?: boolean; store?: () => Promise<Store> }) {
   if (options.persist !== undefined) persistEnabled = options.persist;
   if (options.store) loadStore = options.store;
+  storePromise = undefined;
   warnedUnavailable = false;
 }
 
 function persist(line: LogLine) {
   if (!persistEnabled || process.env.NEXT_RUNTIME === "edge") return;
   // Fire and forget: a request never waits for the write, and a failure only ever reaches the console, never logError.
-  void loadStore()
+  // The store module is loaded once; if loading fails, the next line tries again.
+  storePromise ??= loadStore().catch(error => {
+    storePromise = undefined;
+    throw error;
+  });
+  void storePromise
     .then(store => store.saveLogEntry(line))
     .catch(() => {
       if (warnedUnavailable) return;
