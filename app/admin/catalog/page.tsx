@@ -19,6 +19,7 @@ export default async function CatalogAdminPage() {
         <h2>{section.title}</h2><p className="muted">{section.count} {section.count === 1 ? "entry" : "entries"}. {section.text}</p>
         <Link className="button" href={section.href}>Manage {section.title.toLowerCase()}</Link>
       </section>)}
+      <section className="card"><h2>Files</h2><p className="muted">Tag uploaded files with their course, professor, year, term, topic, and type.</p><Link className="button" href="/admin/files">Manage files</Link></section>
       <section className="card"><h2>Uploads</h2><p className="muted">Add previous exams and course materials.</p><Link className="button" href="/admin/uploads">Upload content</Link></section>
     </div>
   </>;
