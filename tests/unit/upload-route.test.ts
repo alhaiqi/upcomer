@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { saveUpload } = vi.hoisted(() => ({ saveUpload: vi.fn() }));
+const { saveUpload, getAdminUser } = vi.hoisted(() => ({ saveUpload: vi.fn(), getAdminUser: vi.fn() }));
 vi.mock("@/lib/db", () => ({ db: {} }));
+vi.mock("@/lib/auth", () => ({ getAdminUser }));
 vi.mock("@/lib/uploads", async original => ({ ...(await original<typeof import("@/lib/uploads")>()), saveUpload }));
 import { POST } from "@/app/api/admin/uploads/route";
 import { UploadError } from "@/lib/uploads";
@@ -18,11 +19,25 @@ let errors: ReturnType<typeof vi.spyOn>;
 const logged = () => errors.mock.calls.map(call => JSON.parse(String(call[0])));
 beforeEach(() => {
   errors = vi.spyOn(console, "error").mockImplementation(() => {});
+  getAdminUser.mockReset().mockResolvedValue({ id: "admin-1", role: "ADMIN" });
   saveUpload.mockReset().mockResolvedValue({ id: "file new", title: "Final Exam", category: "EXAM", courseId: "course-a" });
 });
 afterEach(() => errors.mockRestore());
 
 describe("admin upload route", () => {
+  it("refuses a visitor or a student with 403 before reading the upload", async () => {
+    getAdminUser.mockResolvedValue(null);
+    const response = await POST(upload());
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ reason: "forbidden", error: "Only an admin can upload files." });
+    expect(getAdminUser).toHaveBeenCalledWith("POST /api/admin/uploads");
+    expect(saveUpload).not.toHaveBeenCalled();
+  });
+  it("checks the admin before the size limit, so an oversized anonymous request is still 403", async () => {
+    getAdminUser.mockResolvedValue(null);
+    const request = new Request("http://localhost/api/admin/uploads", { method: "POST", headers: { "content-length": String(50 * 1024 * 1024) }, body: "x" });
+    expect((await POST(request)).status).toBe(403);
+  });
   it("stores a valid upload and returns the new file", async () => {
     const response = await POST(upload({ year: "2025", session: "Final" }));
     expect(response.status).toBe(201);

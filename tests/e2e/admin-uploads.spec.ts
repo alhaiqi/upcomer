@@ -1,7 +1,10 @@
 import { expect, test } from "@playwright/test";
 import { readFile } from "node:fs/promises";
+import { logInAsAdmin } from "./fixtures";
 
 const fixture = "public/uploads/eece350-final-2025.pdf";
+
+test.beforeEach(async ({ page }) => logInAsAdmin(page));
 
 test("an uploaded exam appears on its course and opens", async ({ page, request }) => {
   const title = `Uploaded Exam ${Date.now()}`;
@@ -51,12 +54,21 @@ test("invalid and corrupt files are refused with a message", async ({ page }) =>
   await page.getByLabel("Title").fill(title);
   await page.getByLabel("File").setInputFiles({ name: "exam.pdf", mimeType: "application/pdf", buffer: Buffer.from("this is not a pdf") });
   await page.getByRole("button", { name: "Upload exam" }).click();
-  await expect(page.getByRole("alert")).toContainText("corrupt");
+  // Scoped to the upload form: a page-wide getByRole("alert") also matches Next's empty route announcer.
+  const uploadError = page.locator("form").filter({ has: page.getByRole("button", { name: "Upload exam" }) }).getByRole("alert");
+  await expect(uploadError).toContainText("corrupt");
 
   await page.getByLabel("File").setInputFiles({ name: "exam.exe", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.4") });
   await page.getByRole("button", { name: "Upload exam" }).click();
-  await expect(page.getByRole("alert")).toContainText("Unsupported file type");
+  await expect(uploadError).toContainText("Unsupported file type");
 
   await page.goto("/courses/course-eece350/exams");
   await expect(page.getByText(title)).toHaveCount(0);
+});
+
+test("the upload endpoint refuses a request without an admin session", async ({ request }) => {
+  // The request fixture has its own cookie jar, so it is not logged in as the page is.
+  const response = await request.post("/api/admin/uploads", { multipart: { category: "EXAM", courseId: "course-eece350", title: "Anonymous upload" } });
+  expect(response.status()).toBe(403);
+  expect((await response.json()).reason).toBe("forbidden");
 });
