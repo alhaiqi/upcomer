@@ -25,16 +25,56 @@ model Professor {
   updatedAt DateTime          @updatedAt
 }
 
+enum Role {
+  STUDENT
+  ADMIN
+}
+
+model User {
+  id           String       @id @default(cuid())
+  email        String       @unique
+  passwordHash String
+  name         String
+  role         Role         @default(STUDENT)
+  sessions     Session[]
+  enrollments  UserCourse[]
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+model UserCourse {
+  userId    String
+  courseId  String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  course    Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([userId, courseId])
+  @@index([userId])
+}
+
 model Course {
-  id         String            @id @default(cuid())
-  code       String            @unique
-  name       String
-  facultyId  String
-  faculty    Faculty           @relation(fields: [facultyId], references: [id])
-  professors CourseProfessor[]
-  files      CourseFile[]
-  createdAt  DateTime          @default(now())
-  updatedAt  DateTime          @updatedAt
+  id          String            @id @default(cuid())
+  code        String            @unique
+  name        String
+  facultyId   String
+  faculty     Faculty           @relation(fields: [facultyId], references: [id])
+  professors  CourseProfessor[]
+  files       CourseFile[]
+  enrollments UserCourse[]
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
 }
 
 model CourseProfessor {
