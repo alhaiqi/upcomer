@@ -1,6 +1,23 @@
-import { PrismaClient, FileCategory } from "@prisma/client";
+import { PrismaClient, FileCategory, Role } from "@prisma/client";
+import bcrypt from "bcryptjs";
 
 const db = new PrismaClient();
+
+async function seedAdmin() {
+  const email = process.env.ADMIN_EMAIL?.trim().toLowerCase();
+  const password = process.env.ADMIN_PASSWORD;
+  if (!email || !password) {
+    console.warn("Skipping the admin user: set ADMIN_EMAIL and ADMIN_PASSWORD in .env");
+    return;
+  }
+  const name = process.env.ADMIN_NAME?.trim() || "Upcomer Admin";
+  const passwordHash = await bcrypt.hash(password, 10);
+  await db.user.upsert({
+    where: { email },
+    update: { name, passwordHash, role: Role.ADMIN },
+    create: { email, name, passwordHash, role: Role.ADMIN },
+  });
+}
 
 async function main() {
   const engineering = await db.faculty.upsert({ where: { code: "ENG" }, update: {}, create: { id: "faculty-eng", code: "ENG", name: "Faculty of Engineering" } });
@@ -30,6 +47,7 @@ async function main() {
   for (const file of files) {
     await db.courseFile.upsert({ where: { id: file.id }, update: {}, create: { ...file, originalFileName: file.storageKey, mimeType: "application/pdf" } });
   }
+  await seedAdmin();
 }
 
 main().finally(() => db.$disconnect());
