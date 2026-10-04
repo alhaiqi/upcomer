@@ -266,3 +266,132 @@ No CSS was needed.
   - `auth-my-courses.spec.ts` and `admin-catalog.spec.ts` delete the students they create in `afterAll`, matched by their stamped emails, together with their sessions and My Courses entries.
   - 202 leftover test students were removed from the dev database, along with 102 sessions and 68 My Courses entries. The admin account was kept.
   - Over three e2e runs (24/24 each), User, CourseFile, and UserCourse counts were identical before and after.
+
+---
+
+# US-87: Error tracking and alerting
+
+## Scope
+
+Before this work, logging was one function that printed a JSON line. US-87 adds the following, without changing the `logError(event, context)` API any member calls:
+- severity levels;
+- sanitizing inside the logger;
+- persistence with 30-day retention;
+- an admin monitoring page;
+- threshold alerting to a Discord-compatible webhook.
+
+It also fixes defects 1 and 3 from `MEMBER_4_CROSS_TEST_REPORT_WORKSPACE.md`.
+
+Branch: `feature/monitoring`, cut from `main` at `96cc1fa` (after PR #11). Not pushed.
+
+## Architecture
+
+| Area | Files | Responsibility |
+| --- | --- | --- |
+| Logger | `lib/logger.ts` (shared) | `EVENT_LEVELS` table, `levelOf`, `sanitizeContext`, `errorCode`, the unchanged `logError`, and a lazy, fire-and-forget hand-off to the store. Imports nothing from Prisma, so it stays safe for edge code. |
+| Store | `lib/log-store.ts` (new) | `saveLogEntry`, `purgeOldEntries`, `checkAlert` with cooldown and webhook, and the page's reads. Node only; never calls `logError`. |
+| Schema | `prisma/schema.prisma`, `prisma/migrations/20261007000000_monitoring/` | `enum LogLevel`, `model LogEntry` with indexes on `createdAt`, `(level, createdAt)`, and `(event, createdAt)` |
+| Page | `app/admin/monitoring/page.tsx` (new) | Banner, 24-hour summary, filtered entries |
+| Links | `app/layout.tsx` (shared), `app/admin/catalog/page.tsx` | "Monitoring" in the admin header; a card on the catalog overview |
+| Member 3 | `app/files/[fileId]/route.ts` | `errorCode` on `file_open_failed` (one import, one field) |
+| Config | `.env.example` | `ALERT_THRESHOLD`, `ALERT_WINDOW_MINUTES`, `ALERT_COOLDOWN_MINUTES`, `ALERT_WEBHOOK_URL`, `LOG_PERSIST`, empty by default |
+
+## Design decisions and why
+
+**One table for levels, checked by the compiler.** `EVENT_LEVELS: Record<LogEvent, LogLevel>`. Adding an event without a level does not compile.
+- **error:** failures.
+- **warn:** expected refusals.
+- **info:** the alert itself.
+
+`file_record_not_found` is warn, because it means an unknown ID was typed into a URL. `physical_file_not_found` is error, because a record points at a file that is gone. Member 1's refusal events use `reason: "db_error"` for real database failures. A rule next to the table raises exactly those to error, so a database outage during login counts toward alerts while wrong passwords don't.
+
+**Sanitizing happens in the logger, for every caller.**
+- Every value is a string capped at 200 characters with `…`, which fixes **defect 1**: the 5,000-character ID now logs as 200 characters plus `…`.
+- Control characters are removed, so a value can't start a fake second line.
+- Keys matching `password`, `token`, `secret`, `cookie`, `email`, `authorization`, or `apiKey` are dropped as defense in depth. `sessionId`, `userId`, and `reason` are kept.
+- A context key can't overwrite `event`, `level`, or `timestamp`.
+
+The console line is unchanged apart from a new `level` field. All existing tests passed without changes.
+
+**`errorCode(error)` gives the short code only** (`ENOENT`, `EACCES`, `EISDIR`, `P2002`), never the message, since messages often contain paths. `file_open_failed` now logs it, which fixes **defect 3**. A unit test checks that `EISDIR` is logged and the message's path is not.
+
+**Persistence can never break or slow a request.**
+- `logError` stays synchronous and starts the save without waiting.
+- The store module is imported lazily and once, only on the Node runtime.
+- On any failure (database down, table missing, module not loadable) the line has already gone to the console. One `log_persistence_unavailable` warning is printed per process.
+- The store never calls `logError`, so a failure cannot recurse.
+- `LOG_PERSIST=off` disables saving.
+
+**Unit tests cannot reach the database.** While writing the tests, I found that under Vitest, several concurrent dynamic imports of a mocked module could resolve to the **real** store. Four test log lines reached the dev database before I noticed. Those 4 rows were identified by event, level, and timestamp and deleted. Two changes fix it:
+- The store import is now cached.
+- Under `NODE_ENV=test` the default loader refuses to load the real store, so tests must pass their own; a test asserts this.
+
+Four further unit-test runs left the `LogEntry` count unchanged.
+
+**Retention is cheap.** `deleteMany({ createdAt < now − 30 days })` runs at most once an hour per server process, on a log write or when the monitoring page loads, so it also runs on a quiet system. The `createdAt` index keeps it fast.
+
+**Alerting:**
+- Only error-level entries count; the alert itself is info.
+- On each error, `checkAlert` counts errors in the window by event. At the threshold it checks for a `monitoring_alert_triggered` entry within the cooldown, which defaults to the window.
+- If none exists, it records one with the counts and event names, and posts the webhook.
+- Because the cooldown is stored in the database, it holds across restarts.
+- Within one process, concurrent errors share one check, so a burst can't send two messages.
+
+**The webhook message holds event names and counts only**, which are fixed identifiers, never IDs or user text:
+- The message is in Discord's `{ content }` format with `allowed_mentions: { parse: [] }`.
+- It has a 3-second timeout.
+- Only `https` URLs are used, plus `http` to `localhost`/`127.0.0.1` so it can be tested locally (the plan said https only; I widened it for the demo).
+- The URL is a secret and is never printed.
+
+**The page follows the admin pattern.** It is a server component marked `force-dynamic`, with `requireAdmin("/admin/monitoring")` first, a GET filter form like Member 2's, and the newest 100 entries.
+- The banner has `role="alert"` and `data-testid="monitoring-alert"`. Tests find it by test ID or text, never by role, because Next's route announcer is also an alert.
+- Times are shown in UTC.
+
+## Acceptance and demo
+
+| Check | Result |
+| --- | --- |
+| 6 × `/files/file-missing` on a production server | 6 `physical_file_not_found` rows saved, so consecutive writes are all stored |
+| Threshold | One `monitoring_alert_triggered` row, raised at the 5th error: `count=5`, `events=physical_file_not_found:5` |
+| Webhook (local listener) | Exactly one POST: `**Upcomer alert:** 5 errors in the last 10 minutes (threshold 5). • physical_file_not_found: 5 Details: /admin/monitoring` |
+| 6 more errors at once | 12 rows, still one alert and one POST: the cooldown held |
+| Server whose schema has no `LogEntry` table | Responses unchanged (404 ×3 in 353 ms), 3 console lines, exactly one `log_persistence_unavailable`, no recursion |
+| Middleware bundle | No Prisma code (`.next/server/middleware.js`) |
+
+All demo rows and the throwaway schema were deleted afterwards. Only rows created since the demo started were deleted.
+
+## Tests and checks performed
+
+| Test file | Tests | Covers |
+| --- | --- | --- |
+| `tests/unit/logger.test.ts` | 17 | Every event has a level; the `db_error` rule; the console line; the 200-character cap; control characters; sensitive keys dropped and IDs kept; reserved keys; `errorCode`; `file_open_failed` logs `EISDIR` without the message; persistence off under tests; the real store never loaded in tests; edge runtime skipped; database failure means console only, one warning, no recursion or throw; an unloadable store; no waiting |
+| `tests/unit/log-store.test.ts` | 27 | Saving; alert check after errors only; retention cutoff and hourly throttle; below and at the threshold; alert context; cooldown and after the cooldown; one check for concurrent errors; env overrides and defaults; webhook payload, timeout, and mentions; unsafe URLs ignored; local http allowed; webhook failures swallowed without the URL; page reads and filters; banner status cases |
+| `tests/unit/monitoring-page.test.tsx` | 12 | Summary, entries, filters kept selected, every event offered, banner hidden, shown, and during the cooldown, webhook wording, retention on load, error page, access before any read, visitor redirect, catalog card, header link for admins only |
+| `tests/e2e/admin-monitoring.spec.ts` | 2 | Real errors: 6 opens of `file-missing`, waiting until they are saved; the admin reaches the page from the header, filters by event and 1 hour, sees `fileId=file-missing` at level error and the alert banner (by test ID). A visitor is redirected; a student has no link and gets 404. `afterAll` deletes only rows created since the test started, and the student. |
+
+| Command or check | Result |
+| --- | --- |
+| `npm test` | Passed: 403 tests in 27 files (56 new; all 347 existing unchanged) |
+| `npm run lint` | Passed |
+| `npx tsc --noEmit` | Passed |
+| `npm run build` | Passed; `/admin/monitoring` built |
+| Migration | The SQL starts at `-- CreateEnum`, with no warning lines; applied with `prisma migrate deploy` |
+| `npm run test:e2e` | 26/26 passed, no other server running; `User` and `CourseFile` counts unchanged; my spec's log rows removed |
+
+## Team integration
+
+- **All members:** no code change needed. `logError` works as before and every line now has a level. New events must be added to `EVENT_LEVELS`; the compiler insists.
+- **Member 3:** `app/files/[fileId]/route.ts` gains `errorCode: errorCode(error)` on `file_open_failed`. This fixes the cross-test defects 1 and 3 (the cap is in the logger).
+- **Member 1:** one admin-only "Monitoring" link in the header in `app/layout.tsx`. Your header tests are unchanged and pass.
+
+**Shared files touched:**
+- `lib/logger.ts`, `prisma/schema.prisma` (plus the new migration)
+- `app/layout.tsx`, `app/files/[fileId]/route.ts`
+- `app/globals.css` (appended `.log-table`, `.level-*`, `.log-alert`, `.log-details`)
+- `.env.example`, `README.md` (route and the Monitoring section)
+
+## Remaining work
+
+- **E2E log rows.** Other members' e2e tests also write warn rows (`login_failed`, `unauthorized_access` and others; about 14 per run). These are real logs of test traffic and expire after 30 days. Delete them in each spec if the team prefers.
+- **Multiple processes.** The cooldown is in the database, but two server processes could each raise one alert in the same second. One process is all Sprint 1 runs.
+- **Further ideas:** a "send test alert" button, alerting on bursts of warnings (for example many `login_failed`), and paging through more than 100 entries.
