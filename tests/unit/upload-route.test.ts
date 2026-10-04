@@ -39,11 +39,11 @@ describe("admin upload route", () => {
     expect((await POST(request)).status).toBe(403);
   });
   it("stores a valid upload and returns the new file", async () => {
-    const response = await POST(upload({ year: "2025", session: "Final" }));
+    const response = await POST(upload({ year: "2025", termId: "term-fall", examType: "FINAL" }));
     expect(response.status).toBe(201);
     expect(await response.json()).toEqual({ file: { id: "file new", title: "Final Exam", category: "EXAM", courseId: "course-a", url: "/files/file%20new" } });
     const input = saveUpload.mock.calls[0][0];
-    expect(input).toMatchObject({ courseId: "course-a", category: "EXAM", title: "Final Exam", year: 2025, session: "Final", fileName: "final.pdf" });
+    expect(input).toMatchObject({ courseId: "course-a", category: "EXAM", title: "Final Exam", year: 2025, termId: "term-fall", examType: "FINAL", fileName: "final.pdf" });
     expect(Buffer.from(input.bytes)).toEqual(pdf);
     expect(errors).not.toHaveBeenCalled();
   });

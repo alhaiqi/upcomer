@@ -1,20 +1,43 @@
 import { expect, test } from "@playwright/test";
-import { readFile } from "node:fs/promises";
+import { PrismaClient } from "@prisma/client";
+import { readFile, unlink } from "node:fs/promises";
+import path from "node:path";
 import { logInAsAdmin } from "./fixtures";
 
 const fixture = "public/uploads/eece350-final-2025.pdf";
+const stamp = Date.now();
+const titles = { exam: `Uploaded Exam ${stamp}`, material: `Uploaded Material ${stamp}`, rejected: `Rejected Upload ${stamp}` };
 
 test.beforeEach(async ({ page }) => logInAsAdmin(page));
 
+// Remove every record this file uploads, and its stored copy, so test uploads do not pile up in the shared database and folder.
+test.afterAll(async () => {
+  const db = new PrismaClient();
+  try {
+    const uploaded = await db.courseFile.findMany({ where: { title: { in: Object.values(titles) } }, select: { id: true, storageKey: true } });
+    const root = path.resolve(process.env.FILE_STORAGE_ROOT || "public/uploads");
+    for (const { storageKey } of uploaded) {
+      // Only ever delete upload copies, never the committed fixtures next to them.
+      const file = path.resolve(root, storageKey);
+      if (!/^(exams|materials)\/[^/\\]+$/.test(storageKey) || !file.startsWith(root + path.sep)) continue;
+      await unlink(file).catch(error => { if (error.code !== "ENOENT") throw error; });
+    }
+    await db.courseFile.deleteMany({ where: { id: { in: uploaded.map(file => file.id) } } });
+  } finally {
+    await db.$disconnect();
+  }
+});
+
 test("an uploaded exam appears on its course and opens", async ({ page, request }) => {
-  const title = `Uploaded Exam ${Date.now()}`;
+  const title = titles.exam;
   await page.goto("/admin/uploads");
   await page.getByRole("link", { name: "Upload Previous Exam" }).click();
   await page.getByLabel("Course").selectOption("course-eece350");
   await page.getByLabel("Title").fill(title);
   await page.getByLabel("Professor (optional)").selectOption({ label: "Professor A" });
   await page.getByLabel("Year (optional)").fill("2025");
-  await page.getByLabel("Session (optional)").fill("Final");
+  await page.getByLabel("Term (optional)").selectOption({ label: "Fall" });
+  await page.getByLabel("Type (optional)").selectOption({ label: "Final" });
   await page.getByLabel("File").setInputFiles(fixture);
   await page.getByRole("button", { name: "Upload exam" }).click();
   await expect(page.getByRole("status")).toContainText(`Uploaded “${title}”`);
@@ -27,7 +50,9 @@ test("an uploaded exam appears on its course and opens", async ({ page, request 
 
   await page.getByRole("link", { name: "View course exams" }).click();
   await expect(page).toHaveURL(/\/courses\/course-eece350\/exams$/);
-  await expect(page.getByText(title)).toBeVisible();
+  const card = page.locator("article").filter({ hasText: title });
+  await expect(card).toContainText("Term: Fall");
+  await expect(card).toContainText("Type: Final");
   await page.goto("/courses/course-eece330/exams");
   await expect(page.getByText(title)).toHaveCount(0);
   await page.goto("/courses/course-eece350/materials");
@@ -35,7 +60,7 @@ test("an uploaded exam appears on its course and opens", async ({ page, request 
 });
 
 test("an uploaded material appears under materials only", async ({ page }) => {
-  const title = `Uploaded Material ${Date.now()}`;
+  const title = titles.material;
   await page.goto("/admin/uploads/materials?courseId=course-eece330");
   await expect(page.getByLabel("Course")).toHaveValue("course-eece330");
   await page.getByLabel("Title").fill(title);
@@ -49,7 +74,7 @@ test("an uploaded material appears under materials only", async ({ page }) => {
 });
 
 test("invalid and corrupt files are refused with a message", async ({ page }) => {
-  const title = `Rejected Upload ${Date.now()}`;
+  const title = titles.rejected;
   await page.goto("/admin/uploads/exams?courseId=course-eece350");
   await page.getByLabel("Title").fill(title);
   await page.getByLabel("File").setInputFiles({ name: "exam.pdf", mimeType: "application/pdf", buffer: Buffer.from("this is not a pdf") });

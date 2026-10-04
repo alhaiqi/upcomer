@@ -26,10 +26,11 @@ model Professor {
 }
 
 model Term {
-  id        String   @id @default(cuid())
-  name      String   @unique
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id        String       @id @default(cuid())
+  name      String       @unique
+  files     CourseFile[]
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
 }
 
 enum Role {
@@ -98,6 +99,13 @@ enum FileCategory {
   MATERIAL
 }
 
+enum ExamType {
+  MIDTERM
+  FINAL
+  QUIZ
+  OTHER
+}
+
 model CourseFile {
   id               String       @id @default(cuid())
   courseId         String
@@ -109,7 +117,9 @@ model CourseFile {
   storageKey       String
   category         FileCategory
   year             Int?
-  session          String?
+  termId           String?
+  term             Term?        @relation(fields: [termId], references: [id], onDelete: SetNull)
+  examType         ExamType?
   topic            String?
   mimeType         String?
   sizeBytes        Int?
@@ -117,4 +127,5 @@ model CourseFile {
   updatedAt        DateTime     @updatedAt
 
   @@index([courseId, category])
+  @@index([termId])
 }

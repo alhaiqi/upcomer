@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 
-const { getUploadOptions, requireAdmin } = vi.hoisted(() => ({ getUploadOptions: vi.fn(), requireAdmin: vi.fn() }));
+const { getUploadOptions, getTermOptions, requireAdmin } = vi.hoisted(() => ({ getUploadOptions: vi.fn(), getTermOptions: vi.fn(), requireAdmin: vi.fn() }));
 vi.mock("@/lib/uploads", () => ({ getUploadOptions }));
+vi.mock("@/lib/file-metadata", () => ({ getTermOptions }));
 vi.mock("@/lib/auth", () => ({ requireAdmin }));
 import UploadsPage from "@/app/admin/uploads/page";
 import UploadExamPage from "@/app/admin/uploads/exams/page";
@@ -16,6 +17,7 @@ const props = (courseId?: string) => ({ searchParams: Promise.resolve({ courseId
 
 beforeEach(() => {
   getUploadOptions.mockReset().mockResolvedValue(courses);
+  getTermOptions.mockReset().mockResolvedValue([{ id: "term-fall", name: "Fall" }, { id: "term-spring", name: "Spring" }]);
   requireAdmin.mockReset().mockResolvedValue({ id: "admin-1", role: "ADMIN" });
 });
 
@@ -31,15 +33,19 @@ describe("admin upload pages", () => {
     expect(html).toContain('name="category" value="EXAM"');
     expect(html).toContain("EECE350 — Computer Networks");
     expect(html).toContain("EECE330 — Data Structures");
-    expect(html).toContain('name="session"');
+    expect(html).not.toContain('name="session"');
+    expect(html).toContain('<option value="term-fall">Fall</option>');
+    expect(html).toContain('name="examType"');
+    expect(html).toContain('<option value="MIDTERM">Midterm</option>');
     expect(html).toContain('type="file"');
     expect(html).toContain("Upload exam");
   });
-  it("shows the material form without the session field", async () => {
+  it("shows the material form with a term but no type", async () => {
     const html = renderToStaticMarkup(await UploadMaterialPage(props()));
     expect(html).toContain("Upload Course Material");
     expect(html).toContain('name="category" value="MATERIAL"');
-    expect(html).not.toContain('name="session"');
+    expect(html).toContain('name="termId"');
+    expect(html).not.toContain('name="examType"');
     expect(html).toContain("Upload material");
   });
   it("preselects a course from the link and offers only its professors", async () => {
@@ -77,6 +83,7 @@ describe("admin upload page access", () => {
     await expect(UploadExamPage(props())).rejects.toThrow("NEXT_NOT_FOUND");
     await expect(UploadMaterialPage(props())).rejects.toThrow("NEXT_NOT_FOUND");
     expect(getUploadOptions).not.toHaveBeenCalled();
+    expect(getTermOptions).not.toHaveBeenCalled();
   });
   it("sends a visitor to the login page", async () => {
     requireAdmin.mockRejectedValue(new Error("NEXT_REDIRECT /login?next=%2Fadmin%2Fuploads%2Fexams"));

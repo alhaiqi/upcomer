@@ -36,13 +36,16 @@ describe("course pages", () => {
     await expect(CoursePage(params)).rejects.toThrow("not found");
   });
   it("shows exams and their empty state", async () => {
-    getCourseExams.mockResolvedValueOnce([{ id: "exam-a", title: "Final Exam", professor: null, year: 2025, session: "Final", topic: null }]);
-    expect(renderToStaticMarkup(await ExamsPage(params))).toContain("Final Exam");
+    getCourseExams.mockResolvedValueOnce([{ id: "exam-a", title: "Final Exam", professor: null, year: 2025, term: { name: "Fall" }, examType: "FINAL", topic: null }]);
+    const html = renderToStaticMarkup(await ExamsPage(params));
+    expect(html).toContain("Final Exam");
+    expect(html).toContain("Term: Fall");
+    expect(html).toContain("Type: Final");
     expect(renderToStaticMarkup(await ExamsPage(params))).toContain("No previous exams are available");
     expect(getCourseExams).toHaveBeenCalledWith("course-a");
   });
   it("shows materials and their empty state", async () => {
-    getCourseMaterials.mockResolvedValueOnce([{ id: "material-a", title: "Network Models", professor: null, year: null, session: null, topic: "Networking" }]);
+    getCourseMaterials.mockResolvedValueOnce([{ id: "material-a", title: "Network Models", professor: null, year: null, term: null, examType: null, topic: "Networking" }]);
     expect(renderToStaticMarkup(await MaterialsPage(params))).toContain("Network Models");
     expect(renderToStaticMarkup(await MaterialsPage(params))).toContain("No course materials are available");
     expect(getCourseMaterials).toHaveBeenCalledWith("course-a");
