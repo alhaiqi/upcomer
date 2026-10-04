@@ -24,7 +24,10 @@ type LogEvent =
   | "upload_options_retrieval_failed"
   | "catalog_entry_rejected"
   | "catalog_entry_save_failed"
-  | "catalog_admin_retrieval_failed";
+  | "catalog_admin_retrieval_failed"
+  | "file_metadata_rejected"
+  | "file_metadata_save_failed"
+  | "file_metadata_retrieval_failed";
 
 export function logError(event: LogEvent, context: Record<string, string | undefined> = {}) {
   console.error(JSON.stringify({ event, timestamp: new Date().toISOString(), ...context }));
