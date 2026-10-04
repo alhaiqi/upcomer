@@ -49,6 +49,7 @@ The seed is repeatable and includes one record for a deliberately missing physic
 | `/admin/catalog/:section/:id` | Edit one faculty, course, professor, or term |
 | `/admin/files` | Every uploaded file with its metadata; optional `courseId`, `saved`, and `error` query parameters |
 | `/admin/files/:id` | Edit one file's course, professor, year, term, type, and topic; optional `error` query parameter |
+| `/admin/monitoring` | Logged errors and warnings, the 24-hour summary, and the alert status; optional `level`, `event`, and `range` query parameters; admins only |
 
 ## Team integration
 
@@ -132,3 +133,85 @@ Failures are logged with `logError` as `catalog_entry_rejected` (with the entity
 Failures are logged as `file_metadata_rejected` (file ID and reason), `file_metadata_save_failed` (file ID and error type), and `file_metadata_retrieval_failed`. Titles and topics are never logged.
 
 Tests are in `tests/unit/catalog-admin.test.ts`, `tests/unit/catalog-admin-actions.test.ts`, `tests/unit/catalog-admin-pages.test.tsx`, `tests/unit/file-metadata.test.ts`, `tests/unit/file-metadata-actions.test.ts`, `tests/unit/file-metadata-pages.test.tsx`, `tests/e2e/admin-catalog.spec.ts`, and `tests/e2e/admin-file-metadata.spec.ts`. Admin e2e tests log in through `tests/e2e/fixtures.ts`, which reads `ADMIN_EMAIL` and `ADMIN_PASSWORD` from `.env`. Shared files changed: `prisma/schema.prisma` and `prisma/seed.ts` (terms), `lib/logger.ts` (the three events above), `app/layout.tsx` (the Admin link), and `app/globals.css` (`.field select`, `.checkbox-list`, `.catalog-list`, `.catalog-links`).
+
+## Monitoring (US-87)
+
+Every feature reports failures through one function, `logError(event, context)` in `lib/logger.ts`. Each call:
+
+1. classifies the event,
+2. cleans its context,
+3. prints one JSON line to the server console, and
+4. saves the line to the `LogEntry` table in the background.
+
+Admins see the result at `/admin/monitoring`, and a burst of errors raises an alert.
+
+### Levels
+
+| Level | Meaning |
+| --- | --- |
+| `error` | Something failed that should not have: a database read or write, storage, a missing or unreadable file |
+| `warn` | An expected refusal: a wrong password, a duplicate, a rejected upload, a student on an admin page |
+| `info` | Notable but fine: the monitoring alert itself |
+
+The levels live in one table, `EVENT_LEVELS` in `lib/logger.ts`, and TypeScript requires a level for every event. One rule sits next to it: a `warn` event logged with `reason: "db_error"` is raised to `error`, because the refusal was caused by the database failing.
+
+### Events
+
+| Member | Event | Level | Context |
+| --- | --- | --- | --- |
+| 1 | `signup_failed` | warn (error for `db_error`) | `reason`, `errorType` |
+| 1 | `login_failed` | warn (error for `db_error`) | `reason`, `userId`, `errorType` |
+| 1 | `session_validation_failed` | warn (error for `db_error`) | `reason`, `sessionId`, `userId`, `errorType` |
+| 1 | `unauthorized_access` | warn | `route`, `role`, `userId` |
+| 1 | `logout_failed`, `my_courses_add_failed`, `my_courses_retrieval_failed` | error | `userId`, `courseId`, `errorType` |
+| 2 | `course_catalog_retrieval_failed`, `course_search_failed`, `catalog_filter_options_retrieval_failed` | error | filter IDs, `errorType` |
+| 3 | `course_retrieval_failed`, `exam_list_retrieval_failed`, `material_list_retrieval_failed` | error | `courseId`, `resourceCategory`, `errorType` |
+| 3 | `file_record_not_found` | warn | `fileId` |
+| 3 | `physical_file_not_found`, `invalid_storage_key` | error | `fileId` |
+| 3 | `file_open_failed` | error | `fileId`, `errorType`, `errorCode` |
+| 4 | `catalog_entry_rejected`, `file_metadata_rejected` | warn | `entity`, `reason`, `entryId` or `fileId` |
+| 4 | `catalog_entry_save_failed`, `catalog_admin_retrieval_failed`, `file_metadata_save_failed`, `file_metadata_retrieval_failed` | error | entity, IDs, `operation`, `errorType` |
+| 4 | `monitoring_alert_triggered` | info | `count`, `threshold`, `windowMinutes`, `events`, `webhook` |
+| 5 | `upload_rejected` | warn | `reason`, `courseId`, `resourceCategory` |
+| 5 | `upload_storage_failed`, `upload_record_failed`, `upload_cleanup_failed`, `upload_failed`, `upload_options_retrieval_failed` | error | `courseId`, `resourceCategory`, `errorType`, `errorCode` |
+
+### What is never logged
+
+Only IDs, roles, routes, reasons, error types, and error codes are logged. Error messages are never logged, and neither is anything a user typed: names, emails, titles, passwords, tokens, or file contents.
+
+The logger also enforces three rules on every line, whatever the caller passes:
+- Every value is cut to 200 characters.
+- Control characters are removed, so a value cannot fake a second log line.
+- Keys that look sensitive (`password`, `token`, `secret`, `cookie`, `email`, `authorization`, `apiKey`) are dropped.
+
+To log a Node or Prisma error code (`ENOENT`, `EACCES`, `P2002`) without its message, use `errorCode(error)`.
+
+### Persistence and retention
+
+- **Background save.** Lines are saved to `LogEntry` (`level`, `event`, `context`, `createdAt`). A request never waits for the save.
+- **Database failure.** If the database is down or the table is missing, logging falls back to the console and prints one `log_persistence_unavailable` warning. It never logs about its own failure.
+- **Edge and test runtimes.** The logger loads the database code lazily, so it is safe to import from edge code. Under unit tests it never loads it at all.
+- **Turning it off.** Set `LOG_PERSIST=off` to keep logs on the console only.
+- **Retention.** Entries older than 30 days are deleted at most once an hour, on the next log write or when `/admin/monitoring` is opened.
+
+### The monitoring page
+
+`/admin/monitoring` is for admins only. It is linked from the header ("Monitoring") and from `/admin/catalog`. It shows:
+- an alert banner, while the error count is at or above the threshold or an alert was raised within the cooldown;
+- the counts per event and level for the last 24 hours;
+- the newest 100 entries, filterable by level, event, and time range (last hour, 24 hours, 7 days, or 30 days).
+
+### Alerts
+
+When at least `ALERT_THRESHOLD` error-level events (default 5) occur within `ALERT_WINDOW_MINUTES` (default 10), the app records a `monitoring_alert_triggered` entry. If `ALERT_WEBHOOK_URL` is set, it also posts one message to it.
+
+- **Message content.** Event names and counts only, in Discord's format (`{ "content": … }`), with mentions disabled.
+- **Cooldown.** After an alert, no other alert is raised for `ALERT_COOLDOWN_MINUTES` (default: the window), so one incident sends one message.
+- **Setup.** In Discord, open Server Settings, then Integrations, then Webhooks, then New Webhook, and copy the URL into `ALERT_WEBHOOK_URL` in `.env`. Only `https` URLs are used, plus plain `http` to `localhost` for testing.
+- **Failure.** A failing webhook prints one `alert_webhook_failed` warning, never the URL.
+
+**Demo:**
+1. Open http://localhost:3000/files/file-missing five times (the seeded record whose file is deliberately missing).
+2. Open http://localhost:3000/admin/monitoring as the admin. The banner shows "Alert: 5 errors in the last 10 minutes", and the entries show `physical_file_not_found` with `fileId=file-missing`.
+
+Tests are in `tests/unit/logger.test.ts`, `tests/unit/log-store.test.ts`, `tests/unit/monitoring-page.test.tsx`, and `tests/e2e/admin-monitoring.spec.ts`.

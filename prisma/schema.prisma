@@ -129,3 +129,22 @@ model CourseFile {
   @@index([courseId, category])
   @@index([termId])
 }
+
+enum LogLevel {
+  INFO
+  WARN
+  ERROR
+}
+
+// One logged event (US-87). Context holds the logger's sanitized fields only.
+model LogEntry {
+  id        String   @id @default(cuid())
+  level     LogLevel
+  event     String
+  context   Json
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([level, createdAt])
+  @@index([event, createdAt])
+}

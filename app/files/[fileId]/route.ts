@@ -1,5 +1,5 @@
 import { FileUnavailableError, getOriginalFile } from "@/lib/files";
-import { logError } from "@/lib/logger";
+import { errorCode, logError } from "@/lib/logger";
 
 export const runtime = "nodejs";
 
@@ -22,7 +22,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ fil
     if (error instanceof FileUnavailableError) {
       return new Response("File unavailable", { status: 404 });
     }
-    logError("file_open_failed", { fileId, errorType: error instanceof Error ? error.name : "Unknown" });
+    logError("file_open_failed", { fileId, errorType: error instanceof Error ? error.name : "Unknown", errorCode: errorCode(error) });
     return new Response("File unavailable", { status: 500 });
   }
 }

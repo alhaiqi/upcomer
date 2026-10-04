@@ -56,3 +56,12 @@ h2 { font-size: 1.4rem; margin: 2rem 0 1rem; }
 .catalog-list { margin: 0; padding: 0; list-style: none; }
 .catalog-links { display: flex; flex-wrap: wrap; gap: 1rem; margin: 0; }
 .catalog-links a, .catalog-list a { color: #20599b; font-weight: 700; }
+.log-table { width: 100%; border-collapse: collapse; margin: .5rem 0 1rem; background: white; font-size: .92rem; }
+.log-table th, .log-table td { padding: .5rem .6rem; border-bottom: 1px solid #dce3ec; text-align: left; vertical-align: top; }
+.log-table th { font-size: .8rem; text-transform: uppercase; letter-spacing: .04em; color: #49617e; }
+.log-details { overflow-wrap: anywhere; color: #49617e; }
+.log-alert td { background: #fff6e5; }
+.level { display: inline-block; padding: .1rem .5rem; border-radius: 999px; font-size: .8rem; font-weight: 700; }
+.level-error { background: #fdecec; color: #8f1d1d; }
+.level-warn { background: #fff3d6; color: #7a5200; }
+.level-info { background: #e8f0fb; color: #20599b; }

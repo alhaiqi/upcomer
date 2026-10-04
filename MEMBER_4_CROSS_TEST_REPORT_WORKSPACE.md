@@ -138,6 +138,8 @@ Next's own error output (`⨯ Error [PrismaClientKnownRequestError]`) also appea
 
 ### 1. `file_record_not_found` logs the requested ID at any length (low)
 
+**Status: fixed in US-87** (`feature/monitoring`). The logger now caps every value at 200 characters.
+
 `lib/files.ts` logs `{ fileId }` exactly as requested. A request to `/files/` followed by 5,000 characters wrote a **5,084-character** log line. Anyone can repeat this without a session, so the logs can be padded at will. There is no injection risk, because the value is JSON-escaped.
 
 ```
@@ -152,6 +154,8 @@ GET /files/xxxx…(5000)…  →  404
 "Open Original File" uses `target="_blank"`. When the file is missing (`file-missing`) or unreadable, the new tab shows only the plain text `File unavailable`. It has no layout, no explanation, and no link back. The 404 and 500 cases show the same text. This meets "controlled response, no stack trace", but a student cannot tell what happened or what to do. **Suggested fix:** return a small HTML page ("This file isn't available right now") with a link back to the course, keeping the same status codes.
 
 ### 3. `file_open_failed` doesn't say which error happened (low, monitoring)
+
+**Status: fixed in US-87** (`feature/monitoring`). The event now logs `errorCode`, for example `EISDIR`.
 
 The event logs `errorType: "Error"` for the `EISDIR` case. Node's file errors are all named `Error`, so a permission problem (`EACCES`), a folder (`EISDIR`), and a locked file look identical in the logs. **Suggested fix:** also log `errorCode`, as Member 5's `upload_storage_failed` does.
 
