@@ -57,6 +57,47 @@ Member 2 can link any `Course.id` to `/courses/:courseId` and reuse `Course`, `F
 
 The file route shows PDFs in the browser and downloads other file types. It rejects keys that escape the upload folder, including through filesystem links.
 
+## Continuous integration (US-95)
+
+GitHub Actions runs `.github/workflows/ci.yml` on **every push to `main`** and **every pull request to `main`**. A pull request runs once per push to its branch. When a newer push arrives for the same branch or pull request, the older run is cancelled. A cancelled run is expected, not a failure.
+
+Two jobs run in parallel. Both must be green before merging.
+
+| Job | Steps |
+| --- | --- |
+| `checks` | Node 22 with the npm cache, `npm ci`, `npx prisma generate`, `npm run lint`, `npx tsc --noEmit`, `npm test`, `npm run build` |
+| `e2e` | A `postgres:16` service container as a throwaway database, then `npm ci`, `npx prisma migrate deploy`, `npm run db:seed`, `npx playwright install --with-deps chromium`, and `npm run test:e2e` with `CI=true`. On failure, the Playwright report is uploaded as an artifact. |
+
+No secrets are needed:
+- **Database.** The e2e database exists only for the run and is thrown away afterwards. The team's hosted database is never used.
+- **Admin account.** The workflow sets a test-only admin (`ci-admin@mail.aub.edu`) for the seed and the admin tests.
+- **Alerts.** `ALERT_WEBHOOK_URL` is not set, so CI never posts alerts.
+- **Server.** With `CI=true`, Playwright always builds and starts a fresh production server instead of reusing one.
+
+### Reading a failing run
+
+1. Open the pull request's **Checks** tab, or the repository's **Actions** tab, and click the red run.
+2. Click the failed job (`checks` or `e2e`). The red step is the one that failed; expand it to see the output. The step names are the commands above, so `npm test` failing means a unit test failed, `npx tsc --noEmit` a type error, and so on. Run the same command locally to reproduce it.
+3. For `e2e`:
+   1. Scroll to the bottom of the run summary, to **Artifacts**, and download **playwright-report**.
+   2. Unzip it and run `npx playwright show-report playwright-report` from the project folder.
+   3. Click a failed test to see the error, the screenshot of the page, and the **trace**: every action, network request, and console message, step by step.
+4. A step that fails in `npm run db:seed` or `npx prisma migrate deploy` usually means a new migration or seed change does not work on an empty database.
+
+### Reproducing CI locally
+
+Run the `checks` steps from a clean checkout with `npm ci && npx prisma generate && npm run lint && npx tsc --noEmit && npm test && npm run build`.
+
+For `e2e`:
+1. Point `DATABASE_URL` at an empty, throwaway PostgreSQL database, **never the shared one**.
+2. Set `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `FILE_STORAGE_ROOT=public/uploads`, and `CI=true`.
+3. Stop any `npm run dev`, since port 3000 must be free.
+4. Run `npx prisma migrate deploy && npm run db:seed && npm run test:e2e`.
+
+### Making CI required
+
+A repository admin can make a red run block merging: **Settings**, then **Branches**, then **Add branch protection rule** for `main`, then **Require status checks to pass before merging**, and select `checks` and `e2e`.
+
 ## Content ingestion (Member 5)
 
 The admin upload pages cover US-70 (upload a previous exam) and US-71 (upload course materials). Each form takes a course, a title, a file, and optional professor, year, term, type (exams only), and topic. The metadata fields and their checks are shared with Member 4's file edit page (US-72). A finished upload appears on the course's exams or materials page immediately and opens through `/files/:fileId`.
