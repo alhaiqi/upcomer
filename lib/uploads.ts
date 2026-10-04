@@ -3,12 +3,16 @@ import { randomUUID } from "node:crypto";
 import { mkdir, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { db } from "@/lib/db";
+import { checkFileMetadata, parseFileMetadata, type FileMetadata } from "@/lib/file-metadata";
+import { fileMetadataMessage } from "@/lib/file-metadata-rules";
 import { resolveStoragePath } from "@/lib/files";
 import { logError } from "@/lib/logger";
 import { MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL, UPLOAD_FILE_TYPES, UPLOAD_TYPES_LABEL } from "@/lib/upload-rules";
 
 const STATUS = {
-  invalid_fields: 400, empty_file: 400, content_mismatch: 400, professor_not_found: 400,
+  invalid_fields: 400, empty_file: 400, content_mismatch: 400,
+  // The file metadata reasons shared with the admin edit page (US-72).
+  course_required: 400, invalid_year: 400, topic_too_long: 400, professor_not_assigned: 400, term_not_found: 400, invalid_type: 400, type_not_allowed: 400,
   course_not_found: 404, file_too_large: 413, unsupported_type: 415,
   storage_failed: 500, record_failed: 500,
 } as const;
@@ -23,10 +27,7 @@ export class UploadError extends Error {
   }
 }
 
-export type UploadInput = {
-  courseId: string; category: FileCategory; title: string; fileName: string; bytes: Uint8Array;
-  professorId?: string; year?: number; session?: string; topic?: string;
-};
+export type UploadInput = FileMetadata & { category: FileCategory; title: string; fileName: string; bytes: Uint8Array };
 
 export function validateUploadFile(fileName: string, bytes: Uint8Array) {
   const extension = path.extname(fileName).slice(1).toLowerCase();
@@ -50,33 +51,20 @@ function text(form: FormData, name: string, label: string, maxLength: number) {
 export function parseUploadForm(form: FormData, now = new Date()) {
   const category = text(form, "category", "Category", 20);
   if (category !== FileCategory.EXAM && category !== FileCategory.MATERIAL) throw new UploadError("invalid_fields", "Choose whether this is an exam or a material.");
-  const courseId = text(form, "courseId", "Course", 100);
-  if (!courseId) throw new UploadError("invalid_fields", "Choose a course.");
+  const metadata = parseFileMetadata(form, category as FileCategory, now);
+  if (!metadata.ok) throw new UploadError(metadata.error, fileMetadataMessage(metadata.error, now));
   const title = text(form, "title", "Title", 150);
   if (!title) throw new UploadError("invalid_fields", "Enter a title.");
-  const yearText = text(form, "year", "Year", 10);
-  const year = yearText ? Number(yearText) : undefined;
-  const latestYear = now.getFullYear() + 1;
-  if (year !== undefined && (!/^\d{4}$/.test(yearText) || year < 1950 || year > latestYear)) {
-    throw new UploadError("invalid_fields", `Year must be between 1950 and ${latestYear}.`);
-  }
   const file = form.get("file");
   if (!file || typeof file === "string") throw new UploadError("invalid_fields", "Choose a file to upload.");
-  return {
-    courseId, category: category as FileCategory, title, year, file,
-    professorId: text(form, "professorId", "Professor", 100) || undefined,
-    session: text(form, "session", "Session", 50) || undefined,
-    topic: text(form, "topic", "Topic", 100) || undefined,
-  };
+  return { ...metadata.metadata, category: category as FileCategory, title, file };
 }
 
 export async function saveUpload(input: UploadInput) {
   const { extension, mimeType } = validateUploadFile(input.fileName, input.bytes);
-  const course = await db.course.findUnique({ where: { id: input.courseId }, select: { id: true } });
-  if (!course) throw new UploadError("course_not_found", "The selected course doesn't exist.");
-  if (input.professorId && !(await db.professor.findUnique({ where: { id: input.professorId }, select: { id: true } }))) {
-    throw new UploadError("professor_not_found", "The selected professor doesn't exist.");
-  }
+  const invalid = await checkFileMetadata(input);
+  if (invalid) throw new UploadError(invalid, fileMetadataMessage(invalid));
+  const course = { id: input.courseId };
 
   const storageKey = `${input.category === FileCategory.EXAM ? "exams" : "materials"}/${randomUUID()}.${extension}`;
   const filePath = resolveStoragePath(storageKey);
@@ -93,7 +81,7 @@ export async function saveUpload(input: UploadInput) {
       data: {
         courseId: course.id, professorId: input.professorId, title: input.title, category: input.category,
         originalFileName: path.basename(input.fileName.replaceAll("\\", "/")).slice(0, 255), storageKey,
-        year: input.year, session: input.session, topic: input.topic, mimeType, sizeBytes: input.bytes.length,
+        year: input.year, termId: input.termId, examType: input.examType, topic: input.topic, mimeType, sizeBytes: input.bytes.length,
       },
     });
   } catch (error) {

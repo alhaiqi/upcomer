@@ -14,7 +14,8 @@ test("an uploaded exam appears on its course and opens", async ({ page, request 
   await page.getByLabel("Title").fill(title);
   await page.getByLabel("Professor (optional)").selectOption({ label: "Professor A" });
   await page.getByLabel("Year (optional)").fill("2025");
-  await page.getByLabel("Session (optional)").fill("Final");
+  await page.getByLabel("Term (optional)").selectOption({ label: "Fall" });
+  await page.getByLabel("Type (optional)").selectOption({ label: "Final" });
   await page.getByLabel("File").setInputFiles(fixture);
   await page.getByRole("button", { name: "Upload exam" }).click();
   await expect(page.getByRole("status")).toContainText(`Uploaded “${title}”`);
@@ -27,7 +28,9 @@ test("an uploaded exam appears on its course and opens", async ({ page, request 
 
   await page.getByRole("link", { name: "View course exams" }).click();
   await expect(page).toHaveURL(/\/courses\/course-eece350\/exams$/);
-  await expect(page.getByText(title)).toBeVisible();
+  const card = page.locator("article").filter({ hasText: title });
+  await expect(card).toContainText("Term: Fall");
+  await expect(card).toContainText("Type: Final");
   await page.goto("/courses/course-eece330/exams");
   await expect(page.getByText(title)).toHaveCount(0);
   await page.goto("/courses/course-eece350/materials");
@@ -43,7 +46,9 @@ test("an uploaded material appears under materials only", async ({ page }) => {
   await page.getByLabel("File").setInputFiles(fixture);
   await page.getByRole("button", { name: "Upload material" }).click();
   await page.getByRole("link", { name: "View course materials" }).click();
-  await expect(page.getByText(title)).toBeVisible();
+  const card = page.locator("article").filter({ hasText: title });
+  await expect(card).toContainText("Term: Fall");
+  await expect(card).toContainText("Type: Final");
   await page.goto("/courses/course-eece330/exams");
   await expect(page.getByText(title)).toHaveCount(0);
 });

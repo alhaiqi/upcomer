@@ -3,10 +3,10 @@ import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-const { course, professor, courseFile } = vi.hoisted(() => ({
-  course: { findUnique: vi.fn(), findMany: vi.fn() }, professor: { findUnique: vi.fn() }, courseFile: { create: vi.fn() },
+const { course, courseProfessor, term, courseFile } = vi.hoisted(() => ({
+  course: { findUnique: vi.fn(), findMany: vi.fn() }, courseProfessor: { findUnique: vi.fn() }, term: { findUnique: vi.fn() }, courseFile: { create: vi.fn() },
 }));
-vi.mock("@/lib/db", () => ({ db: { course, professor, courseFile } }));
+vi.mock("@/lib/db", () => ({ db: { course, courseProfessor, term, courseFile } }));
 import { MAX_UPLOAD_BYTES } from "@/lib/upload-rules";
 import { getUploadOptions, parseUploadForm, saveUpload, validateUploadFile } from "@/lib/uploads";
 
@@ -26,7 +26,8 @@ beforeEach(async () => {
   errors = vi.spyOn(console, "error").mockImplementation(() => {});
   course.findUnique.mockReset().mockResolvedValue({ id: "course-a" });
   course.findMany.mockReset();
-  professor.findUnique.mockReset().mockResolvedValue({ id: "prof-a" });
+  courseProfessor.findUnique.mockReset().mockResolvedValue({ courseId: "course-a" });
+  term.findUnique.mockReset().mockResolvedValue({ id: "term-fall" });
   courseFile.create.mockReset().mockImplementation(async ({ data }) => ({ id: "file-new", ...data }));
 });
 afterEach(async () => {
@@ -78,19 +79,25 @@ describe("upload form parsing", () => {
   const now = new Date("2026-10-03T00:00:00Z");
 
   it("reads required and optional fields", () => {
-    const parsed = parseUploadForm(form({ title: "  Final Exam  ", year: "2025", session: "Final", topic: "Routing", professorId: "prof-a" }), now);
-    expect(parsed).toMatchObject({ category: "EXAM", courseId: "course-a", title: "Final Exam", year: 2025, session: "Final", topic: "Routing", professorId: "prof-a" });
+    const parsed = parseUploadForm(form({ title: "  Final Exam  ", year: "2025", termId: "term-fall", examType: "FINAL", topic: "Routing", professorId: "prof-a" }), now);
+    expect(parsed).toMatchObject({ category: "EXAM", courseId: "course-a", title: "Final Exam", year: 2025, termId: "term-fall", examType: "FINAL", topic: "Routing", professorId: "prof-a" });
     expect(parsed.file.name).toBe("final.pdf");
   });
   it("leaves blank optional fields undefined", () => {
-    expect(parseUploadForm(form({ year: "", session: " ", topic: "", professorId: "" }), now)).toMatchObject({ year: undefined, session: undefined, topic: undefined, professorId: undefined });
+    expect(parseUploadForm(form({ year: "", termId: " ", examType: "", topic: "", professorId: "" }), now)).toMatchObject({ year: undefined, termId: undefined, examType: undefined, topic: undefined, professorId: undefined });
   });
   it.each([
-    [{ category: "OTHER" }], [{ category: "" }], [{ courseId: "" }], [{ title: "   " }], [{ title: "x".repeat(151) }],
-    [{ year: "25" }], [{ year: "abcd" }], [{ year: "1949" }], [{ year: "2028" }], [{ year: "2025.5" }],
-    [{ session: "x".repeat(51) }], [{ topic: "x".repeat(101) }],
-  ])("rejects invalid fields %o", fields => {
-    expect(() => parseUploadForm(form(fields), now)).toThrow(expect.objectContaining({ reason: "invalid_fields", status: 400 }));
+    [{ category: "OTHER" }, "invalid_fields"], [{ category: "" }, "invalid_fields"], [{ title: "   " }, "invalid_fields"], [{ title: "x".repeat(151) }, "invalid_fields"],
+    [{ courseId: "" }, "course_required"], [{ courseId: "   " }, "course_required"],
+    [{ year: "25" }, "invalid_year"], [{ year: "abcd" }, "invalid_year"], [{ year: "1949" }, "invalid_year"], [{ year: "2028" }, "invalid_year"], [{ year: "2025.5" }, "invalid_year"],
+    [{ topic: "x".repeat(101) }, "topic_too_long"], [{ examType: "SESSION" }, "invalid_type"], [{ category: "MATERIAL", examType: "FINAL" }, "type_not_allowed"],
+  ])("rejects invalid fields %o as %s", (fields, reason) => {
+    expect(() => parseUploadForm(form(fields), now)).toThrow(expect.objectContaining({ reason, status: 400 }));
+  });
+  it("uses the same messages as the admin edit page", () => {
+    expect(() => parseUploadForm(form({ courseId: "" }), now)).toThrow("Choose a course.");
+    expect(() => parseUploadForm(form({ year: "1949" }), now)).toThrow("Year must be a 4-digit year between 1950 and 2027.");
+    expect(() => parseUploadForm(form({ category: "MATERIAL", examType: "FINAL" }), now)).toThrow("Only exams have a type.");
   });
   it("accepts next year's exams and rejects a missing file", () => {
     expect(parseUploadForm(form({ year: "2027" }), now).year).toBe(2027);
@@ -101,12 +108,12 @@ describe("upload form parsing", () => {
 
 describe("saving an upload", () => {
   it("stores the bytes and creates a matching record", async () => {
-    const record = await saveUpload({ ...input, professorId: "prof-a", year: 2025, session: "Final" });
+    const record = await saveUpload({ ...input, professorId: "prof-a", year: 2025, termId: "term-fall", examType: "FINAL" });
     expect(record.id).toBe("file-new");
     const data = courseFile.create.mock.calls[0][0].data;
     expect(data).toMatchObject({
       courseId: "course-a", professorId: "prof-a", title: "Final Exam 2025", category: "EXAM", originalFileName: "final.pdf",
-      year: 2025, session: "Final", mimeType: "application/pdf", sizeBytes: pdf.length,
+      year: 2025, termId: "term-fall", examType: "FINAL", mimeType: "application/pdf", sizeBytes: pdf.length,
     });
     expect(data.storageKey).toMatch(/^exams\/[0-9a-f-]{36}\.pdf$/);
     expect(new Uint8Array(await readFile(path.join(root, data.storageKey)))).toEqual(pdf);
@@ -129,11 +136,14 @@ describe("saving an upload", () => {
     expect(course.findUnique).not.toHaveBeenCalled();
     expect(await storedFiles()).toHaveLength(0);
   });
-  it("rejects an unknown course or professor without storing anything", async () => {
+  it("rejects an unknown course, a professor who doesn't teach the course, or an unknown term without storing anything", async () => {
     course.findUnique.mockResolvedValueOnce(null);
     await expect(saveUpload(input)).rejects.toMatchObject({ reason: "course_not_found", status: 404 });
-    professor.findUnique.mockResolvedValueOnce(null);
-    await expect(saveUpload({ ...input, professorId: "ghost" })).rejects.toMatchObject({ reason: "professor_not_found", status: 400 });
+    courseProfessor.findUnique.mockResolvedValueOnce(null);
+    await expect(saveUpload({ ...input, professorId: "prof-b" })).rejects.toMatchObject({ reason: "professor_not_assigned", status: 400, message: "The selected professor doesn't teach the selected course." });
+    expect(courseProfessor.findUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { courseId_professorId: { courseId: "course-a", professorId: "prof-b" } } }));
+    term.findUnique.mockResolvedValueOnce(null);
+    await expect(saveUpload({ ...input, termId: "ghost" })).rejects.toMatchObject({ reason: "term_not_found", status: 400 });
     expect(await storedFiles()).toHaveLength(0);
     expect(courseFile.create).not.toHaveBeenCalled();
   });
