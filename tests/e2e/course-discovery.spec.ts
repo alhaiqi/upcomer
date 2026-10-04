@@ -4,10 +4,10 @@ test("a student browses, searches and filters courses, then opens one", async ({
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Browse Courses" })).toBeVisible();
   const cards = page.locator("article");
-  await expect(cards).toHaveCount(3);
-  await expect(cards.nth(0)).toContainText("EECE330");
-  await expect(cards.nth(1)).toContainText("EECE350");
-  await expect(cards.nth(2)).toContainText("MATH201");
+  // An admin can add courses through /admin/catalog, so check for the seeded ones rather than an exact total.
+  for (const code of ["EECE330", "EECE350", "MATH201"]) {
+    await expect(cards.filter({ hasText: code })).toHaveCount(1);
+  }
 
   await page.getByRole("searchbox", { name: "Search courses" }).fill("eece 350");
   await page.getByRole("button", { name: "Search" }).click();
@@ -19,7 +19,8 @@ test("a student browses, searches and filters courses, then opens one", async ({
   await page.getByRole("searchbox", { name: "Search courses" }).fill("");
   await page.getByRole("combobox", { name: "Filter by faculty" }).selectOption({ label: "Faculty of Engineering" });
   await page.getByRole("button", { name: "Search" }).click();
-  await expect(cards).toHaveCount(2);
+  await expect(cards.filter({ hasText: "EECE350" })).toHaveCount(1);
+  await expect(cards.filter({ hasText: "EECE330" })).toHaveCount(1);
   await expect(page.getByText("MATH201")).toHaveCount(0);
 
   await page.getByRole("combobox", { name: "Filter by professor" }).selectOption({ label: "Professor A" });
