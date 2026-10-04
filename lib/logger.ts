@@ -15,7 +15,13 @@ type LogEvent =
   | "logout_failed"
   | "unauthorized_access"
   | "my_courses_add_failed"
-  | "my_courses_retrieval_failed";
+  | "my_courses_retrieval_failed"
+  | "upload_rejected"
+  | "upload_storage_failed"
+  | "upload_record_failed"
+  | "upload_cleanup_failed"
+  | "upload_failed"
+  | "upload_options_retrieval_failed";
 
 export function logError(event: LogEvent, context: Record<string, string | undefined> = {}) {
   console.error(JSON.stringify({ event, timestamp: new Date().toISOString(), ...context }));
