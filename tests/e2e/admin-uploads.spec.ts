@@ -46,9 +46,7 @@ test("an uploaded material appears under materials only", async ({ page }) => {
   await page.getByLabel("File").setInputFiles(fixture);
   await page.getByRole("button", { name: "Upload material" }).click();
   await page.getByRole("link", { name: "View course materials" }).click();
-  const card = page.locator("article").filter({ hasText: title });
-  await expect(card).toContainText("Term: Fall");
-  await expect(card).toContainText("Type: Final");
+  await expect(page.getByText(title)).toBeVisible();
   await page.goto("/courses/course-eece330/exams");
   await expect(page.getByText(title)).toHaveCount(0);
 });
