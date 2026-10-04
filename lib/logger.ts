@@ -85,7 +85,6 @@ export const MAX_VALUE_LENGTH = 200;
 const SENSITIVE_KEY = /pass(word)?|token|secret|cookie|e-?mail|authorization|api[-_]?key/i;
 // A context field can never overwrite the line's own fields.
 const RESERVED_KEYS = new Set(["event", "level", "timestamp"]);
-// eslint-disable-next-line no-control-regex
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/g;
 
 export function sanitizeContext(context: LogContext = {}): Record<string, string> {

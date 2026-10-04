@@ -20,6 +20,7 @@ export default async function CatalogAdminPage() {
         <Link className="button" href={section.href}>Manage {section.title.toLowerCase()}</Link>
       </section>)}
       <section className="card"><h2>Files</h2><p className="muted">Tag uploaded files with their course, professor, year, term, topic, and type.</p><Link className="button" href="/admin/files">Manage files</Link></section>
+      <section className="card"><h2>Monitoring</h2><p className="muted">Errors and warnings from every feature, with alerts when errors pile up.</p><Link className="button" href="/admin/monitoring">Open monitoring</Link></section>
       <section className="card"><h2>Uploads</h2><p className="muted">Add previous exams and course materials.</p><Link className="button" href="/admin/uploads">Upload content</Link></section>
     </div>
   </>;
