@@ -234,7 +234,7 @@ Titles, topics, and error messages are never logged; unit tests assert this. Upl
     - `professor_not_found` is gone; `professor_not_assigned` covers it.
     - A professor who exists but doesn't teach the course is now refused; before, any professor was accepted.
   - `getUploadOptions` is unchanged and is reused by my pages. The pages also call `getTermOptions()`.
-  - **Your e2e upload tests now clean up after themselves**, at the team leader's request. `admin-uploads.spec.ts` gives its three uploads stamped titles. An `afterAll` deletes those `CourseFile` rows and their stored copies under `FILE_STORAGE_ROOT`. It only deletes keys of the form `exams/<name>` or `materials/<name>` inside the root, never the committed fixtures.
+  - **Your e2e upload tests now clean up after themselves.** `admin-uploads.spec.ts` gives its three uploads stamped titles. An `afterAll` deletes those `CourseFile` rows and their stored copies under `FILE_STORAGE_ROOT`. It only deletes keys of the form `exams/<name>` or `materials/<name>` inside the root, never the committed fixtures.
     - Earlier runs had left 55 test uploads in the dev database (28 "Uploaded Exam …" and 27 "Uploaded Material …"; my earlier note said 28 because it counted only exams). They were deleted, matched by title pattern and never seeded `file-*` IDs, along with their 49 stored files; 6 rows had no file on this disk. The database now has the 7 seeded files.
     - Before and after each of three e2e runs, the database had 7 `CourseFile` rows and 0 stored uploads.
   - **The README now says uploads are admin-only** (fixed in `fix/admin-upload-auth`), replacing "not access-controlled yet".
