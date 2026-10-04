@@ -47,6 +47,9 @@ async function main() {
   for (const file of files) {
     await db.courseFile.upsert({ where: { id: file.id }, update: {}, create: { ...file, originalFileName: file.storageKey, mimeType: "application/pdf" } });
   }
+  for (const name of ["Fall", "Spring", "Summer"]) {
+    await db.term.upsert({ where: { name }, update: {}, create: { id: `term-${name.toLowerCase()}`, name } });
+  }
   await seedAdmin();
 }
 
