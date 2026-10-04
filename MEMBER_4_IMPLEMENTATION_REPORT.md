@@ -261,4 +261,8 @@ No CSS was needed.
 - A ranking or analysis feature that uses the course, term, and type (none exists yet).
 - `/admin/files` has no pagination. It lists all files, or one course's files with the filter.
 - Deleting files, and editing a file's title or category, if the team wants them.
-- Member 1: `a login link cannot send a student off the site after logging in` is flaky. `signUp()` navigates to `/login` without waiting for the sign-up to finish, so the navigation can cancel it. It failed once in three runs with `invalid_credentials` for an unknown email. The fix is to wait for `/login?registered=1` in `signUp()`. Member 1's and my catalog e2e specs also leave their test students in the database: about 6 users per run.
+- ~~Member 1's flaky sign-up test and the test students left by e2e runs~~ Fixed on `fix/e2e-flake-and-users`:
+  - `signUp()` in `auth-my-courses.spec.ts` now waits for `/login?registered=1`, so the following navigation can't cancel the sign-up. Attempts that are expected to be refused use a new `submitSignUp()`. No assertion changed.
+  - `auth-my-courses.spec.ts` and `admin-catalog.spec.ts` delete the students they create in `afterAll`, matched by their stamped emails, together with their sessions and My Courses entries.
+  - 202 leftover test students were removed from the dev database, along with 102 sessions and 68 My Courses entries. The admin account was kept.
+  - Over three e2e runs (24/24 each), User, CourseFile, and UserCourse counts were identical before and after.
