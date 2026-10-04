@@ -12,7 +12,7 @@ const created = {
   courseCode: `QAC${stamp}`, course: `Testing Course ${stamp}`,
 };
 
-// Member 2's discovery test expects only the seeded courses, so remove everything this file adds.
+// Remove everything this file adds so test entries do not pile up in the shared database.
 test.afterAll(async () => {
   const db = new PrismaClient();
   try {

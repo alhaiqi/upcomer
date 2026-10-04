@@ -4,32 +4,38 @@ test("a student browses, searches and filters courses, then opens one", async ({
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Browse Courses" })).toBeVisible();
   const cards = page.locator("article");
+  // Match a card by its code alone, since another course's name may mention the same code.
+  const card = (code: string) => cards.filter({ has: page.getByText(code, { exact: true }) });
   // An admin can add courses through /admin/catalog, so check for the seeded ones rather than an exact total.
   for (const code of ["EECE330", "EECE350", "MATH201"]) {
-    await expect(cards.filter({ hasText: code })).toHaveCount(1);
+    await expect(card(code)).toHaveCount(1);
   }
 
   await page.getByRole("searchbox", { name: "Search courses" }).fill("eece 350");
   await page.getByRole("button", { name: "Search" }).click();
   await expect(page).toHaveURL(/q=eece\+350/);
-  await expect(cards).toHaveCount(1);
-  await expect(cards.first()).toContainText("EECE350");
+  // Other courses may match too, but an exact code match is listed first.
+  await expect(cards.first().getByText("EECE350", { exact: true })).toBeVisible();
+  await expect(card("EECE330")).toHaveCount(0);
+  await expect(card("MATH201")).toHaveCount(0);
   await expect(page.getByRole("searchbox", { name: "Search courses" })).toHaveValue("eece 350");
 
   await page.getByRole("searchbox", { name: "Search courses" }).fill("");
   await page.getByRole("combobox", { name: "Filter by faculty" }).selectOption({ label: "Faculty of Engineering" });
   await page.getByRole("button", { name: "Search" }).click();
-  await expect(cards.filter({ hasText: "EECE350" })).toHaveCount(1);
-  await expect(cards.filter({ hasText: "EECE330" })).toHaveCount(1);
-  await expect(page.getByText("MATH201")).toHaveCount(0);
+  await expect(card("EECE350")).toHaveCount(1);
+  await expect(card("EECE330")).toHaveCount(1);
+  await expect(card("MATH201")).toHaveCount(0);
 
   await page.getByRole("combobox", { name: "Filter by professor" }).selectOption({ label: "Professor A" });
   await page.getByRole("button", { name: "Search" }).click();
-  await expect(cards).toHaveCount(1);
+  await expect(card("EECE350")).toHaveCount(1);
+  await expect(card("EECE330")).toHaveCount(0);
+  await expect(card("MATH201")).toHaveCount(0);
   await expect(page.getByRole("combobox", { name: "Filter by faculty" })).toHaveValue("faculty-eng");
   await expect(page.getByRole("combobox", { name: "Filter by professor" })).toHaveValue("prof-a");
 
-  await cards.first().getByRole("link", { name: "Open Course" }).click();
+  await card("EECE350").getByRole("link", { name: "Open Course" }).click();
   await expect(page).toHaveURL(/\/courses\/course-eece350$/);
   await expect(page.getByRole("heading", { name: "Computer Networks" })).toBeVisible();
 });
