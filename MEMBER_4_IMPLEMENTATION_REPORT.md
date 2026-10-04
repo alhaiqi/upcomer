@@ -6,7 +6,7 @@ This work implements catalog management from the Sprint 1 plan:
 
 - US-69: Manage the course catalog (add and edit faculties, courses, professors, and terms)
 
-It also covers monitoring for catalog failures, which is part of this feature. US-72 (tagging a file with metadata) is a separate task and is not started. `CourseFile` is unchanged.
+It also covers monitoring for catalog failures, which is part of this feature. US-72 (tagging a file with metadata) came later, on its own branch; see "US-72: Tag a file with metadata" below.
 
 Branch: `feature/admin-catalog`, cut from `main` at `0aaa1c7` after PR #3. One integration fix for Member 5's uploads went on its own branch, `fix/admin-upload-auth`; see "Team integration".
 
@@ -113,6 +113,150 @@ Codes, names, and error messages are never logged, following the team's rule aga
 
 - Review and merge `fix/admin-upload-auth` and `feature/admin-catalog`.
 - Member 2 to decide on the exact-count assertions in `course-discovery.spec.ts`.
-- US-72: link `CourseFile` to `Term`, add a file type, and edit file metadata.
+- ~~US-72: link `CourseFile` to `Term`, add a file type, and edit file metadata.~~ Done; see below.
 - Deleting catalog entries, if the team wants it, with a decision on what happens to a course's files and enrollments.
 - US-95 (CI) still does not exist.
+
+---
+
+# US-72: Tag a file with metadata
+
+## Scope
+
+US-72: *As an admin, I want to tag a file with course, professor, year, session, topic, and type so that it's analyzed under the right course.*
+
+Branch: `feature/file-metadata`, cut from `main` at `b236b90` (after PR #8). Ten commits, not pushed.
+
+**There is no ranking or analysis feature yet.** "Analyzed under the right course" currently means the file is listed on that course's exams or materials page. A future analysis feature should read `CourseFile.courseId`, `termId`, and `examType`, which this story makes reliable.
+
+## Design decisions and why
+
+**"Session" became a term, and "type" is a new field.** `CourseFile.session` was free text, and the seed used it for "Final"/"Midterm", which is really the exam type. It is replaced by:
+- `termId`: an optional link to the US-69 `Term` model, `onDelete: SetNull`, indexed.
+- `examType`: an optional enum `ExamType { MIDTERM FINAL QUIZ OTHER }`.
+
+A type is allowed on exams only. Materials have no type field in either form, and the server refuses one.
+
+**The data migration keeps every piece of session text.** In `20261006000000_file_metadata`, for every row with a non-blank session and `s = lower(trim(session))`:
+
+| Old session | Result |
+| --- | --- |
+| Exactly a term name (any category), e.g. `fall` | `termId` set to that term |
+| On an exam, starting with `midterm` / `final` / `quiz` | `examType` MIDTERM / FINAL / QUIZ |
+| On an exam, anything else that is not a term | `examType` OTHER |
+| Anything that is not *exactly* a term name, or exactly `midterm` / `final` / `quiz` on an exam (e.g. `Midterm 2`, `Final 2025`, `Make-up`, any non-term text on a material) | The original text is also kept in `topic`: copied if the topic is empty, otherwise appended as `topic (session: text)`. Nothing is truncated. |
+
+A `DO $$ … RAISE EXCEPTION` guard runs before `DROP COLUMN "session"`. It counts rows whose text is covered by none of the three, and aborts the migration if any exist, so the column is never dropped while text would be lost. The SQL file starts at `-- CreateEnum`, with no warning lines. Whitespace-only sessions are treated as empty.
+
+**One set of rules for the edit page and the upload form.**
+- `lib/file-metadata-rules.ts` holds the type list, year range, topic limit, and every message. It has no database access, so the browser can use it too.
+- `lib/file-metadata.ts` has `parseFileMetadata` (form only) and `checkFileMetadata` (database references). Member 5's `parseUploadForm`/`saveUpload` and my `saveFileMetadata` both call them.
+- `components/file-metadata-fields.tsx` renders the same fields in both forms.
+
+| Rule | Reason | Message |
+| --- | --- | --- |
+| Course required | `course_required` | Choose a course. |
+| Course must exist | `course_not_found` | The selected course doesn't exist. |
+| Professor optional, but must teach the selected course (a `CourseProfessor` row) | `professor_not_assigned` | The selected professor doesn't teach the selected course. |
+| Term optional, but must exist | `term_not_found` | The selected term doesn't exist. |
+| Year optional; 4 digits, 1950 to next year (the range uploads already used) | `invalid_year` | Year must be a 4-digit year between 1950 and 2027. |
+| Topic ≤ 100 characters | `topic_too_long` | Topic must be 100 characters or fewer. |
+| Type only on exams | `type_not_allowed` | Only exams have a type. |
+| Type must be one of the four | `invalid_type` | Choose Midterm, Final, Quiz, or Other as the type. |
+
+**The professor list follows the course.** The fields component is a small client component, like Member 5's form. It offers only the selected course's professors and clears the professor when the course changes. Retagging a file therefore can't silently keep a professor from the old course. The server still checks the assignment.
+
+**Retagging is one update.** `saveFileMetadata` loads the file's category (which decides whether a type is allowed), validates, checks references, and updates all six fields in one `courseFile.update`. Blank optional fields clear the stored value. The course pages filter by `courseId`, so the file moves at once. After saving, the admin lands on `/admin/files` filtered by the file's new course, with "Saved. The file is listed under its course now."
+
+**The pages follow the catalog pattern.**
+- Both `/admin/files` pages are server components marked `force-dynamic`, and each starts with `requireAdmin("/admin/files")`, as does `saveFileMetadataAction`.
+- The edit form is a plain POST to the server action.
+- Results come back as `saved`/`error` query parameters.
+- The list filter is a GET form, like Member 2's catalog filters.
+- The catalog overview has a new "Files" card, "Manage files".
+
+**Title and category are not editable.** US-72 lists the six metadata fields only. Changing an exam into a material would need its own decision about the stored type.
+
+## Acceptance tests
+
+| Acceptance test | Behavior | E2E |
+| --- | --- | --- |
+| 1. Given an uploaded file, when the admin sets course, professor, year, session, topic and type, then the values are saved on it | Values are saved, shown again on the edit page, and shown on the course's exams page as "Term: Fall" and "Type: Final" | `an admin sets course, professor, year, term, topic, and type and they are saved` checks the form, the database row, and the course page |
+| 2. Given no course selected, when saved, then it is refused | "Choose a course." Nothing is written. The browser's `required` check is skipped in the test so the server's refusal is what is tested | `saving without a course is refused because the course is required` checks the message, that the database row still has EECE350, and that the file is still on EECE350's page |
+| 3. Given a file retagged to another course, it appears under the new course and no longer under the old one | Retag EECE350 → EECE330 with Professor B. Professor A is no longer offered | `a file retagged to another course moves to that course only` |
+
+A fourth e2e test checks that a student gets 404 on `/admin/files` and `/admin/files/:id`.
+
+The e2e spec creates its own three exam records through Prisma. They point at an existing fixture PDF, so no file is written. The spec finds them by stamped title, never by counts, and deletes them and its test student in `afterAll`. After the runs, 0 `qa-` files and 0 test students were left.
+
+## Monitoring
+
+Three events were appended to `LogEvent` in `lib/logger.ts`:
+
+| Event | Context logged |
+| --- | --- |
+| `file_metadata_rejected` | `fileId`, `reason` (any reason in the table above, or `not_found`) |
+| `file_metadata_save_failed` | `fileId`, `errorType`; rethrown to the error page |
+| `file_metadata_retrieval_failed` | `entity` (`files`, `file`, or `terms`), `fileId` or `courseId` filter, `errorType`; rethrown |
+
+Titles, topics, and error messages are never logged; unit tests assert this. Upload-side refusals keep Member 5's `upload_rejected` event, now with the new reasons, so nothing is logged twice.
+
+## Tests and checks performed
+
+| Test file | Tests | Covers |
+| --- | --- | --- |
+| `tests/unit/file-metadata.test.ts` (new) | 35 | Parsing and trimming; course required; year range and format; topic length; type only on exams and only from the list; course, professor-assignment, and term checks; saving all values; clearing blanks; type checked against the stored category; deleted file (`P2025`); logging without typed text; reads; messages |
+| `tests/unit/file-metadata-actions.test.ts` (new) | 4 | Redirects for success (filtered by the new course), refusal, and deleted file; nothing saved for a student or visitor |
+| `tests/unit/file-metadata-pages.test.tsx` (new) | 13 | List, filter, empty and unknown course, notices, prefilled edit page, professors limited to the course, no type for materials, error messages, not-found, access before any read, catalog link |
+| `tests/e2e/admin-file-metadata.spec.ts` (new) | 4 | The three acceptance tests plus student access |
+| Member 5's and Member 3's tests (updated) | — | `uploads.test.ts` (44): new reasons, the same messages as the edit page, the professor-assignment and term checks. Also `upload-route.test.ts`, `upload-pages.test.tsx`, `resource-list.test.tsx`, `course-pages.test.tsx`, and `admin-uploads.spec.ts` (selects Term and Type; checks "Term: Fall" and "Type: Final" on the uploaded exam) |
+
+| Command or check | Result |
+| --- | --- |
+| `npm test` | Passed: 347 tests in 24 files (52 new) |
+| `npm run lint` | Passed |
+| `npx tsc --noEmit` | Passed |
+| `npm run build` | Passed; `/admin/files` and `/admin/files/[id]` built |
+| Migration dry run | Run inside a transaction that was rolled back, with edge-case rows (`Midterm 2`, material `Final`, ` fall `, `Make-up` with a topic, material `Spring`, `Spring 2024` with a topic, `QUIZ`, blank). Each row mapped as in the table above. A second dry run with the topic step removed was stopped by the guard ("4 file(s) would lose their session text") with the column intact. |
+| `prisma migrate deploy` on the dev database | Applied. Before it ran, a snapshot recorded 29 of 58 files with a session (28 `Final`, 1 `Midterm`, all exams). |
+| Post-deploy check against the snapshot | 29 checked, 29 got their exact type, 0 failures, 0 topics over 100 characters |
+| `npm run db:seed`, run twice | Repeatable; three terms; seeded exams carry FINAL/MIDTERM |
+| `npm run test:e2e` | **24/24 passed** against the production build, with no other server running. The first run had 1 failure: my own edit had added the term/type checks to the material upload test too. It was fixed in `ca143e6`, and the next full run passed. |
+
+## Team integration
+
+- **Member 5 (uploads):**
+  - The exam form now has a Term dropdown and a Type dropdown (Midterm, Final, Quiz, Other) instead of the free-text Session. The material form has Term but no Type.
+  - The course, professor, year, term, type, and topic fields come from the shared `FileMetadataFields`. Labels are unchanged, apart from Session → Term/Type.
+  - `parseUploadForm` and `saveUpload` use the shared rules. API changes:
+    - `session` is replaced by `termId` and `examType`.
+    - New 400 reasons: `course_required`, `invalid_year`, `topic_too_long`, `professor_not_assigned`, `term_not_found`, `invalid_type`, `type_not_allowed`.
+    - `professor_not_found` is gone; `professor_not_assigned` covers it.
+    - A professor who exists but doesn't teach the course is now refused; before, any professor was accepted.
+  - `getUploadOptions` is unchanged and is reused by my pages. The pages also call `getTermOptions()`.
+  - **Your e2e upload tests never delete the files they upload.** The dev database had 28 copies of "Final" exams from earlier runs, migrated fine. Consider an `afterAll` cleanup like the catalog and file specs.
+  - **The README paragraph saying uploads are "not access-controlled yet" is out of date** since `fix/admin-upload-auth`. I left your section's wording otherwise as it was.
+- **Member 3 (course pages):** `getCourseFiles` includes `term`. `ResourceList` shows "Term: …" and "Type: …" instead of "Session: …".
+- **Member 2:** No change.
+- **Member 1:** No change; access uses `requireAdmin` as before.
+
+**Shared files touched on `feature/file-metadata`:**
+- Schema and data: `prisma/schema.prisma` (`ExamType`, `CourseFile.termId`/`examType`, `session` removed, `Term.files`), `prisma/seed.ts` (terms upserted before files; `examType` instead of `session`).
+- Shared lib: `lib/logger.ts` (three events, appended).
+- Member 5's code: `lib/uploads.ts`, `components/upload-form.tsx`, `app/admin/uploads/exams/page.tsx`, `app/admin/uploads/materials/page.tsx`.
+- Member 3's code: `lib/courses.ts`, `components/resource-list.tsx`.
+- Docs: `README.md` (routes, the upload API fields, the US-72 section).
+- Tests: `tests/unit/uploads.test.ts`, `upload-route.test.ts`, `upload-pages.test.tsx`, `resource-list.test.tsx`, `course-pages.test.tsx`, `tests/e2e/admin-uploads.spec.ts`.
+
+No CSS was needed.
+
+**Before merging:**
+- Anyone with an older checkout must run `npx prisma generate` and `prisma migrate deploy` (or `npm run db:migrate`); the generated client no longer has `session`.
+- The migration was already applied to the shared dev database during this work. A branch without it will fail on `session` against that database.
+
+## Remaining work
+
+- A ranking or analysis feature that uses the course, term, and type (none exists yet).
+- `/admin/files` has no pagination. It lists all files, or one course's files with the filter.
+- Deleting files, and editing a file's title or category, if the team wants them.
+- Member 5's upload e2e cleanup and the stale README note (above).
