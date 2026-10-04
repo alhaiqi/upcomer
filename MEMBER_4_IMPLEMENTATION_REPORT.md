@@ -8,7 +8,7 @@ This work implements catalog management from the Sprint 1 plan:
 
 It also covers monitoring for catalog failures, which is part of this feature. US-72 (tagging a file with metadata) is a separate task and is not started. `CourseFile` is unchanged.
 
-Branch: `feature/admin-catalog`, cut from `main` at `0aaa1c7` after PR #3. One integration fix for Member 5's uploads went on its own branch, `fix/admin-upload-auth`; see "Team integration". Neither branch is pushed.
+Branch: `feature/admin-catalog`, cut from `main` at `0aaa1c7` after PR #3. One integration fix for Member 5's uploads went on its own branch, `fix/admin-upload-auth`; see "Team integration".
 
 ## Architecture
 
