@@ -1,4 +1,4 @@
-import { PrismaClient, FileCategory, Role } from "@prisma/client";
+import { PrismaClient, ExamType, FileCategory, Role } from "@prisma/client";
 import bcrypt from "bcryptjs";
 
 const db = new PrismaClient();
@@ -35,20 +35,20 @@ async function main() {
   for (let index = 0; index < courses.length; index++) {
     await db.courseProfessor.upsert({ where: { courseId_professorId: { courseId: courses[index].id, professorId: professors[index].id } }, update: {}, create: { courseId: courses[index].id, professorId: professors[index].id } });
   }
-  const files: Array<{ id: string; courseId: string; professorId: string; title: string; storageKey: string; category: FileCategory; year?: number; session?: string; topic?: string }> = [
-    { id: "file-eece350-final", courseId: courses[0].id, professorId: professors[0].id, title: "Final Exam 2025", storageKey: "eece350-final-2025.pdf", category: "EXAM", year: 2025, session: "Final" },
-    { id: "file-eece350-midterm", courseId: courses[0].id, professorId: professors[0].id, title: "Midterm 2024", storageKey: "eece350-midterm-2024.pdf", category: "EXAM", year: 2024, session: "Midterm" },
+  for (const name of ["Fall", "Spring", "Summer"]) {
+    await db.term.upsert({ where: { name }, update: {}, create: { id: `term-${name.toLowerCase()}`, name } });
+  }
+  const files: Array<{ id: string; courseId: string; professorId: string; title: string; storageKey: string; category: FileCategory; year?: number; examType?: ExamType; topic?: string }> = [
+    { id: "file-eece350-final", courseId: courses[0].id, professorId: professors[0].id, title: "Final Exam 2025", storageKey: "eece350-final-2025.pdf", category: "EXAM", year: 2025, examType: "FINAL" },
+    { id: "file-eece350-midterm", courseId: courses[0].id, professorId: professors[0].id, title: "Midterm 2024", storageKey: "eece350-midterm-2024.pdf", category: "EXAM", year: 2024, examType: "MIDTERM" },
     { id: "file-eece350-notes", courseId: courses[0].id, professorId: professors[0].id, title: "Network Models Lecture", storageKey: "eece350-network-models.pdf", category: "MATERIAL", topic: "Network Models" },
-    { id: "file-eece330-final", courseId: courses[1].id, professorId: professors[1].id, title: "Data Structures Final 2025", storageKey: "eece330-final-2025.pdf", category: "EXAM", year: 2025, session: "Final" },
+    { id: "file-eece330-final", courseId: courses[1].id, professorId: professors[1].id, title: "Data Structures Final 2025", storageKey: "eece330-final-2025.pdf", category: "EXAM", year: 2025, examType: "FINAL" },
     { id: "file-eece330-notes", courseId: courses[1].id, professorId: professors[1].id, title: "Trees and Graphs Notes", storageKey: "eece330-trees-notes.pdf", category: "MATERIAL", topic: "Trees and Graphs" },
     { id: "file-math201-formulas", courseId: courses[2].id, professorId: professors[2].id, title: "Calculus Formula Sheet", storageKey: "math201-formulas.pdf", category: "MATERIAL", topic: "Calculus" },
     { id: "file-missing", courseId: courses[2].id, professorId: professors[2].id, title: "Unavailable Sample", storageKey: "missing-sample.pdf", category: "EXAM" },
   ];
   for (const file of files) {
     await db.courseFile.upsert({ where: { id: file.id }, update: {}, create: { ...file, originalFileName: file.storageKey, mimeType: "application/pdf" } });
-  }
-  for (const name of ["Fall", "Spring", "Summer"]) {
-    await db.term.upsert({ where: { name }, update: {}, create: { id: `term-${name.toLowerCase()}`, name } });
   }
   await seedAdmin();
 }
