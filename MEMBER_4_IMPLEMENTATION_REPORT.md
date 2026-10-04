@@ -395,3 +395,72 @@ All demo rows and the throwaway schema were deleted afterwards. Only rows create
 - **E2E log rows.** Other members' e2e tests also write warn rows (`login_failed`, `unauthorized_access` and others; about 14 per run). These are real logs of test traffic and expire after 30 days. Delete them in each spec if the team prefers.
 - **Multiple processes.** The cooldown is in the database, but two server processes could each raise one alert in the same second. One process is all Sprint 1 runs.
 - **Further ideas:** a "send test alert" button, alerting on bursts of warnings (for example many `login_failed`), and paging through more than 100 entries.
+
+---
+
+# US-95: Continuous integration
+
+## Scope
+
+A GitHub Actions workflow now runs the team's checks and the full e2e suite on every push to `main` and every pull request to `main`. Until now these only ran when someone remembered to run them locally.
+
+Branch: `chore/ci`, cut from `main` at `932fee7` (after PR #12). Not pushed. The first real run happens on GitHub when the branch is pushed.
+
+## What was added
+
+| File | Change |
+| --- | --- |
+| `.github/workflows/ci.yml` (new) | Two jobs, `checks` and `e2e`; triggers; concurrency; read-only permissions; the failure artifact |
+| `playwright.config.ts` (shared) | When `CI` is set: an HTML reporter next to `list`, and traces kept for failed tests. Local runs are unchanged. |
+| `README.md` (shared) | "Continuous integration" section: what runs, when, how to read a failing run, how to reproduce it, how to make it required |
+
+## Design decisions and why
+
+**Push to `main` and pull requests to `main` only.** Running on every push to every branch would run CI twice for each push to a pull request branch. Feature branches get CI as soon as a pull request is opened.
+
+**A newer push cancels the older run** (`concurrency: ci-${{ github.ref }}`, `cancel-in-progress: true`), so only the latest commit of a branch or pull request uses runner time.
+
+**`checks` and `e2e` run in parallel**, so a type error and a broken page show up together, and a run takes about as long as `e2e` alone. Both need to pass.
+
+**The e2e database is thrown away.** A `postgres:16` service container, with a health check so steps wait until it accepts connections. `prisma migrate deploy` then runs the whole migration history on an empty database, and `db:seed` fills it.
+- That also tests every new migration from scratch on every pull request, which the shared dev database cannot do.
+- The admin credentials are written in the workflow, because they only exist in a database that is discarded after each run.
+- No repository secrets are needed. `ALERT_WEBHOOK_URL` is never set, so CI cannot post alerts.
+
+**`CI=true`** makes Playwright build and start a fresh production server (`reuseExistingServer: !ci`). It also switches on the HTML report and failure traces. Without that change in `playwright.config.ts`, the artifact would have been empty, because Playwright's default CI reporter writes no files.
+
+**Least privilege:** `permissions: contents: read`. The workflow only reads the code.
+
+## Local reproduction before committing
+
+These steps followed the workflow as closely as possible on Windows.
+
+- **Clean checkout.** A fresh `git clone` of `chore/ci` into my scratch folder: no `.env`, `node_modules`, or `.next`, like a runner. No database variables were set for `checks`.
+- **Throwaway database.** A real PostgreSQL 18.4, run as a user process from the `embedded-postgres` package installed only in the scratch folder, on port 5433. This stood in for the service container, with the same user, password, and database name. It was stopped with `pg_ctl` and its data deleted afterwards.
+- **Project dependencies.** The project's `package.json` and `package-lock.json` were not changed.
+
+| Step | Result |
+| --- | --- |
+| `actionlint` 1.7.7 on `ci.yml` | No problems. It does flag a deliberately broken workflow, so the check is real. |
+| `npm ci` (fresh clone) | Passed, 46 s |
+| `npx prisma generate` | Passed |
+| `npm run lint` | Passed |
+| `npx tsc --noEmit` | Passed |
+| `npm test` | Passed: 403 tests |
+| `npm run build` with no `DATABASE_URL` at all | Passed, so the `checks` job needs no database settings |
+| `npx prisma migrate deploy` on the empty database | All 5 migrations applied, the first from-scratch run of the full history, including the US-72 data migration |
+| `npm run db:seed` | 3 courses, 7 files, 3 terms, and the CI admin as the only user |
+| `npx playwright install chromium` | Passed (`--with-deps` only installs Linux packages) |
+| `npm run test:e2e` with `CI=true` and the workflow's env | **26/26 passed**, exit 0, after a fresh build |
+| A deliberately failing spec (temporary, in the clone only) | Exit 1. `playwright-report/index.html` and the failed test's trace were written, which is what the artifact uploads. |
+| Team database untouched | `User`, `CourseFile`, and `LogEntry` counts identical before and after |
+
+The only differences from GitHub are the operating system (Windows, not Ubuntu), the database port (5433, not 5432), and PostgreSQL 18 instead of 16. The service image and the Linux browser dependencies will first be exercised by the real run.
+
+Port 3000 was held by a running `npm run dev`. I stopped it (PIDs 27920 and 30160) with the user's permission; it needs restarting by hand.
+
+## Remaining work
+
+- Push `chore/ci` and check the first real run on GitHub, including how long the npm cache and the Chromium install take.
+- **Make CI required.** A repository admin turns on branch protection for `main` with `checks` and `e2e` as required checks (README, "Making CI required").
+- Consider retries for e2e on CI only if flaky tests appear. None are configured now, so a flaky test shows up as red instead of being hidden.
