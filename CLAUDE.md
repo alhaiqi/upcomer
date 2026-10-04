@@ -1,0 +1,11 @@
+# Upcomer — working rules for Claude Code
+- Read README.md and the MEMBER_*_REPORT.md files before starting a task; follow existing patterns (server components, plain POST forms, server actions, logError events in lib/logger.ts, Prisma, Vitest + Playwright).
+- Every admin page, server action and API route calls requireAdmin()/getAdminUser() from lib/auth.ts first.
+- Never log user-typed text (names, codes, titles, emails, passwords); log IDs, reasons and error types only.
+- Work on a new branch from an up-to-date main. Commit in small steps. Never push, merge or delete branches — the user does that.
+- Keep changes to other members' code minimal and list every shared file touched.
+- Before reporting done, run: npm test, npm run lint, npx tsc --noEmit, npm run build, and npm run test:e2e.
+- E2E: never run with a dev server running in this folder. Tests must not depend on exact course/file counts, and must clean up what they create.
+- New migrations: hand-check the SQL file starts at the SQL (no warning lines).
+- For non-trivial work, show a plan before writing code.
+- Finish with a short report: what changed, shared files touched, check results, and anything left open.
