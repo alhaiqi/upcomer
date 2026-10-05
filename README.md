@@ -57,6 +57,22 @@ Member 2 can link any `Course.id` to `/courses/:courseId` and reuse `Course`, `F
 
 The file route shows PDFs in the browser and downloads other file types. It rejects keys that escape the upload folder, including through filesystem links.
 
+## US-94: End-to-end tests for critical student journeys
+
+`npm run test:e2e` runs every Playwright spec in `tests/e2e/` against a production build.
+- **Requirements:** a migrated and seeded database, `ADMIN_EMAIL` and `ADMIN_PASSWORD` set for the admin specs, and no `npm run dev` running in this folder.
+- **Cleanup:** each spec deletes what it creates (students, uploads, test records), so runs do not depend on exact counts.
+
+**`tests/e2e/critical-journey.spec.ts` is the integrated end-to-end verification for Sprint 1.** One new student, in one browser session, walks the critical journey in order:
+1. create an account and log in;
+2. browse courses and search for "eece 350";
+3. add EECE350 to My Courses and see it on `/my-courses`;
+4. open the course, browse its exams, and open an exam's original PDF;
+5. go back to the course, browse its materials, and open a material's original PDF;
+6. log out.
+
+Each stage is a `test.step`, so the report reads like the journey. The per-feature specs cover each member's stories in more depth.
+
 ## Continuous integration (US-95)
 
 GitHub Actions runs `.github/workflows/ci.yml` on **every push to `main`** and **every pull request to `main`**. A pull request runs once per push to its branch. When a newer push arrives for the same branch or pull request, the older run is cancelled. A cancelled run is expected, not a failure.
