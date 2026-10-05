@@ -58,6 +58,32 @@ Member 2 can link any `Course.id` to `/courses/:courseId` and reuse `Course`, `F
 
 The file route shows PDFs in the browser and downloads other file types. It rejects keys that escape the upload folder, including through filesystem links.
 
+## Design
+
+The "Study mint" theme is calm and minimal: lots of whitespace, soft 1px borders, subtle hover states, and no heavy shadows or gradients.
+
+**Where the tokens live.** All colors are CSS variables at the top of `app/globals.css`. Each is defined once as `light-dark(light, dark)`, so the two palettes stay side by side. Components use only the variables and the existing class names (`.card`, `.button`, `.notice`, `.field`, …). The standalone "File unavailable" page (`app/files/[fileId]/route.ts`) is a raw HTML response and repeats the few tokens it needs. Change both places together.
+
+| Token | Light | Dark | Used for |
+| --- | --- | --- | --- |
+| `--bg` | #F6FAF8 | #0F1714 | Page background |
+| `--surface` | #FFFFFF | #16211D | Cards, header, inputs |
+| `--border` | #D1E7DD | #2A3A33 | Soft card and header borders |
+| `--input-border` | #6B8A7C | #5E7F71 | Form fields (at least 3:1 against the background) |
+| `--text` / `--muted` | #022C22 / #4B6358 | #E6F2EC / #9DB5AA | Body and secondary text |
+| `--brand` | #064E3B | #6EE7B7 | The "Upcomer" wordmark |
+| `--primary` | #059669 | #34D399 | Focus rings, active borders (non-text) |
+| `--button-bg` / `--link` | #047857 | #34D399 | Buttons (hover #065F46 / #6EE7B7) and links |
+| `--accent` | #F97316 | #FB923C | Decoration only: the course-code dot, the notice edge, the card hover marker |
+
+**Contrast.** Every text color meets WCAG AA (4.5:1) on every background it is used on, in both modes. The brand primary #059669 is only 3.8:1 with white text, so buttons and links use the darker #047857 in light mode, and #059669 is kept for non-text indicators. The accent never colors text.
+
+**Font.** Plus Jakarta Sans, loaded with `next/font/google` in `app/layout.tsx`. It is downloaded at build time and served from the app, with a metrics-matched fallback so text doesn't shift while it loads, and a system font stack behind it. Unit tests mock `next/font/google` in `tests/setup.ts`.
+
+**Dark mode.** The page follows the device setting by default (`color-scheme: light dark`). The header button (`components/theme-toggle.tsx`, labeled "Dark mode", with `aria-pressed`) switches to the other theme and remembers the choice in `localStorage` under `upcomer-theme`. A small inline script in `<head>` applies a stored choice by setting `data-theme` on `<html>` before first paint, so the wrong theme never flashes. Without JavaScript, the device setting still applies. `light-dark()` needs Chrome 123+, Safari 17.5+, or Firefox 120+.
+
+**Motion and layout.** Hover and focus transitions are 120 ms and switch off under `prefers-reduced-motion`. Every focusable element shows a 2px focus ring. Layouts work down to 375px wide without horizontal scrolling. Admin pages use the same tokens but keep their existing layout.
+
 ## US-94: End-to-end tests for critical student journeys
 
 `npm run test:e2e` runs every Playwright spec in `tests/e2e/` against a production build.
