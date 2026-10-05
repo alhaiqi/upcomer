@@ -8,3 +8,6 @@ test-results/
 *.tsbuildinfo
 public/uploads/exams/
 public/uploads/materials/
+
+# Reliability run output (npm run reliability); one example report is kept.
+/reports/*
