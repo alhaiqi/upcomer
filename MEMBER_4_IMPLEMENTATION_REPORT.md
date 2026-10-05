@@ -464,3 +464,60 @@ Port 3000 was held by a running `npm run dev`. I stopped it (PIDs 27920 and 3016
 - Push `chore/ci` and check the first real run on GitHub, including how long the npm cache and the Chromium install take.
 - **Make CI required.** A repository admin turns on branch protection for `main` with `checks` and `e2e` as required checks (README, "Making CI required").
 - Consider retries for e2e on CI only if flaky tests appear. None are configured now, so a flaky test shows up as red instead of being hidden.
+
+---
+
+# US-94: End-to-end tests for critical student journeys
+
+## Scope
+
+In the sprint plan, Member 4 coordinates the final integrated verification. `tests/e2e/critical-journey.spec.ts` is that verification for Sprint 1. It is **one** test in which a single new student, in one browser session, walks the Sprint 1 Critical End-to-End Journey in order. The journey crosses the features of all five members:
+- Member 1: account, login, My Courses, logout;
+- Member 2: browse and search;
+- Member 3: course page, exams, materials, original files;
+- Member 4: the seeded catalog and file metadata;
+- Member 5: the stored PDFs.
+
+Branch: `test/critical-journey`, cut from `main` at `dccd365` (after PR #13). Not pushed. No app code or other spec was changed.
+
+## The journey
+
+Each stage is a `test.step()`, so the Playwright report reads like the journey:
+
+| # | Step | What is checked |
+| --- | --- | --- |
+| 1 | Create account | Sign-up lands on `/login?registered=1` with "Account created. Log in to continue." |
+| 2 | Log in | Lands on `/my-courses`, empty, with "Log out" in the header |
+| 3 | Browse courses | `/` lists courses, including exactly one EECE350 card |
+| 4 | Search for "eece 350" | The URL carries `q=eece+350`; the first result is EECE350 Computer Networks |
+| 5 | Add EECE350 to My Courses | Opened from the search result; "Add to My Courses" gives `?added=1` and "Added to My Courses." |
+| 6 | Confirm it shows on My Courses | `/my-courses` has the EECE350 card |
+| 7 | Open the course | Opened from My Courses; the "Computer Networks" heading is shown |
+| 8 | Browse its exams | "Final Exam 2025" is listed; another course's "Data Structures Final 2025" is not |
+| 9 | Open an exam's original file | The link opens in a new tab; fetched with the student's session it returns 200, `application/pdf`, inline, and the bytes start with `%PDF-` |
+| 10 | Back to the course | "← Back to EECE350" returns to `/courses/course-eece350` |
+| 11 | Browse its materials | "Network Models Lecture" is listed; "Trees and Graphs Notes" is not |
+| 12 | Open a material's original file | Same checks as step 9 |
+| 13 | Log out | Back on `/` with "Log in"; `/my-courses` now redirects to the login page, so the session really ended |
+
+The test reuses the patterns of the other specs:
+- the sign-up and login form labels;
+- `waitForURL`-style URL assertions after every submit;
+- cards found by their exact code or title, never by position or count;
+- a 15-second expect timeout;
+- the file check from `course-workspace.spec.ts`.
+
+The student's email is stamped (`student-<time>-journey@mail.aub.edu`). `afterAll` deletes that student, their sessions, and their My Courses entries in one transaction.
+
+## Results (2026-10-05)
+
+| Command or check | Result |
+| --- | --- |
+| `npx playwright test tests/e2e/critical-journey.spec.ts` | Passed, all 13 steps (9–11 s for the test) |
+| `npm run test:e2e` | **27/27 passed**, no dev server running |
+| `User` and `CourseFile` rows | 1 and 7, before and after each run, so the student was deleted |
+| `npm test` | 403 passed |
+| `npm run lint` | Passed |
+| `npx tsc --noEmit` | Passed |
+
+CI (US-95) runs this spec on every pull request to `main`, against a fresh database.
