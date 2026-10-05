@@ -25,6 +25,7 @@ The seed is repeatable and includes one record for a deliberately missing physic
 | `npm run lint` | ESLint |
 | `npm test` | Unit and component tests |
 | `npm run test:e2e` | Playwright flow; requires migrated and seeded database |
+| `npm run reliability` | Randomized reliability trials against a production build; writes `reports/reliability-<date>.md` and `.json`. `RELIABILITY_RUNS` (default 50 per feature) and `RELIABILITY_SEED` repeat a run. Stop any dev server first |
 | `npm run db:migrate` | Apply/create Prisma migrations |
 | `npm run db:seed` | Seed local data |
 
