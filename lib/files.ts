@@ -3,8 +3,9 @@ import { logError } from "@/lib/logger";
 import { readFile, realpath } from "node:fs/promises";
 import path from "node:path";
 
+// courseId is set once the record is known, so the file route can link back to the course.
 export class FileUnavailableError extends Error {
-  constructor(public reason: "missing_record" | "missing_file" | "unsafe_key") { super(reason); }
+  constructor(public reason: "missing_record" | "missing_file" | "unsafe_key", public courseId?: string) { super(reason); }
 }
 
 export function resolveStoragePath(storageKey: string, root = process.env.FILE_STORAGE_ROOT || "public/uploads") {
@@ -31,9 +32,9 @@ export async function getOriginalFile(fileId: string) {
   let filePath;
   try {
     filePath = resolveStoragePath(record.storageKey);
-  } catch (error) {
+  } catch {
     logError("invalid_storage_key", { fileId });
-    throw error;
+    throw new FileUnavailableError("unsafe_key", record.courseId);
   }
   try {
     const root = await realpath(path.resolve(process.env.FILE_STORAGE_ROOT || "public/uploads"));
@@ -43,12 +44,12 @@ export async function getOriginalFile(fileId: string) {
   } catch (error) {
     if (error instanceof FileUnavailableError) {
       logError("invalid_storage_key", { fileId });
-      throw error;
+      throw new FileUnavailableError("unsafe_key", record.courseId);
     }
     if (error instanceof Error && "code" in error && error.code === "ENOENT") {
       logError("physical_file_not_found", { fileId });
-      throw new FileUnavailableError("missing_file");
+      throw new FileUnavailableError("missing_file", record.courseId);
     }
-    throw error;
+    throw error instanceof Error ? Object.assign(error, { courseId: record.courseId }) : error;
   }
 }
