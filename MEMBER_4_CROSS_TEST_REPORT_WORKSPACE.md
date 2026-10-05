@@ -151,6 +151,8 @@ GET /files/xxxx…(5000)…  →  404
 
 ### 2. A missing or broken file shows a bare text page in a new tab (low, UX)
 
+**Status: fixed in `fix/file-unavailable-page`.** `/files/:fileId` now returns a small styled HTML page ("This file isn't available right now") with the same 404 and 500 status codes. It links back to the file's course when the record exists, and to the catalog for an unknown ID. It never shows the file ID, storage path, or error, and the log events are unchanged.
+
 "Open Original File" uses `target="_blank"`. When the file is missing (`file-missing`) or unreadable, the new tab shows only the plain text `File unavailable`. It has no layout, no explanation, and no link back. The 404 and 500 cases show the same text. This meets "controlled response, no stack trace", but a student cannot tell what happened or what to do. **Suggested fix:** return a small HTML page ("This file isn't available right now") with a link back to the course, keeping the same status codes.
 
 ### 3. `file_open_failed` doesn't say which error happened (low, monitoring)
@@ -175,8 +177,8 @@ Run `npm run dev` (stop it again before any `npm run test:e2e`), then:
 3. On that page, **Open Original File** on "Final Exam 2025" opens a new tab at http://localhost:3000/files/file-eece350-final and the PDF displays in the browser rather than downloading.
 4. **http://localhost:3000/courses/course-eece350/materials** lists only "Network Models Lecture" (Topic: Network Models), and its file opens.
 5. **http://localhost:3000/courses/course-eece330/exams** and **http://localhost:3000/courses/course-eece330/materials** show only "Data Structures Final 2025" and "Trees and Graphs Notes". Nothing from EECE350 appears.
-6. **http://localhost:3000/courses/course-math201/exams** shows "Unavailable Sample". Click **Open Original File** and judge the plain `File unavailable` tab yourself (defect 2). The terminal running `npm run dev` should print one line `{"event":"physical_file_not_found",…,"fileId":"file-missing"}` and nothing else about it.
-7. **http://localhost:3000/files/no-such-file** shows `File unavailable`. The terminal prints `file_record_not_found` with `"fileId":"no-such-file"`.
+6. **http://localhost:3000/courses/course-math201/exams** shows "Unavailable Sample". Click **Open Original File**. The new tab shows the "File unavailable" page with a **Back to the course** link to MATH201 (defect 2, fixed). The terminal running `npm run dev` should print one line `{"event":"physical_file_not_found",…,"fileId":"file-missing"}` and nothing else about it.
+7. **http://localhost:3000/files/no-such-file** shows the "File unavailable" page with a **Browse courses** link. The terminal prints `file_record_not_found` with `"fileId":"no-such-file"`.
 8. **http://localhost:3000/courses/no-such-course** and **http://localhost:3000/courses/no-such-course/exams** show the "Not found" page.
 9. Repeat steps 1 to 3 in a private window (logged out) and while logged in as a student. The pages should look the same either way.
 10. Narrow the window to phone width on step 2 and check the exam cards stay readable.

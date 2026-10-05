@@ -12,11 +12,11 @@ describe("original file lookup", () => {
     await expect(getOriginalFile("unknown")).rejects.toMatchObject({ reason: "missing_record" });
   });
   it("rejects a missing physical file", async () => {
-    findUnique.mockResolvedValue({ storageKey: "not-present.pdf" });
-    await expect(getOriginalFile("missing")).rejects.toMatchObject({ reason: "missing_file" });
+    findUnique.mockResolvedValue({ storageKey: "not-present.pdf", courseId: "course-a" });
+    await expect(getOriginalFile("missing")).rejects.toMatchObject({ reason: "missing_file", courseId: "course-a" });
   });
   it("rejects an unsafe storage key", async () => {
-    findUnique.mockResolvedValue({ storageKey: "../secret" });
-    await expect(getOriginalFile("unsafe")).rejects.toMatchObject({ reason: "unsafe_key" });
+    findUnique.mockResolvedValue({ storageKey: "../secret", courseId: "course-a" });
+    await expect(getOriginalFile("unsafe")).rejects.toMatchObject({ reason: "unsafe_key", courseId: "course-a" });
   });
 });
