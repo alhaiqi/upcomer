@@ -40,7 +40,7 @@ export async function cleanUp(db: PrismaClient, stamp: string, options: { upload
   for (const file of files) {
     if (UPLOAD_KEY.test(file.storageKey)) await unlink(path.join(storageRoot(), file.storageKey)).catch(() => undefined);
   }
-  const users = await db.user.findMany({ where: { email: { startsWith: lower } }, select: { id: true } });
+  const users = await db.user.findMany({ where: { email: { contains: lower } }, select: { id: true } });
   await db.$transaction([
     db.courseFile.deleteMany({ where: { id: { in: files.map(file => file.id) } } }),
     // Sessions and My Courses entries go with their users (cascade).

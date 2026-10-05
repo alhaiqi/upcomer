@@ -3,7 +3,15 @@ import { result, type Context, type Feature } from "../context";
 
 // Sign up, log in, log out, and add to My Courses, through the same server actions the forms use.
 
-const BAD_EMAILS = ["no-at-sign", "two@@example.com", "spaces in@example.com", "@example.com", "missing-domain@", "dot-less@example"];
+// Each pattern stays malformed with the run's stamp in it, so cleanup can still find anything wrongly saved.
+const BAD_EMAILS: [string, (stamp: string) => string][] = [
+  ["no @ sign", stamp => `${stamp}-no-at-sign.example.com`],
+  ["two @ signs", stamp => `${stamp}@@example.com`],
+  ["a space", stamp => `${stamp} space@example.com`],
+  ["no local part", stamp => `@${stamp}.example.com`],
+  ["no domain", stamp => `${stamp}@`],
+  ["no dot in the domain", stamp => `${stamp}@example`],
+];
 
 async function signUp(ctx: Context, fields: { name: string; email: string; password: string }) {
   return ctx.client().postAction("/signup", ctx.actions.signUp, fields);
@@ -47,10 +55,10 @@ export const signUpFeature: Feature = {
       name: "bad email", valid: false,
       async run(ctx) {
         const before = await ctx.db.user.count();
-        const bad = ctx.rng.pick(BAD_EMAILS);
-        const reply = await signUp(ctx, { name: ctx.name("Student"), email: bad.replace("@", `${ctx.stamp.toLowerCase()}@`), password: ctx.password() });
+        const [flaw, makeEmail] = ctx.rng.pick(BAD_EMAILS);
+        const reply = await signUp(ctx, { name: ctx.name("Student"), email: makeEmail(ctx.stamp.toLowerCase()), password: ctx.password() });
         const after = await ctx.db.user.count();
-        return result(`malformed email ("${bad}" pattern)`, "303 → /signup?error=invalid_email, no account",
+        return result(`malformed email (${flaw})`, "303 → /signup?error=invalid_email, no account",
           `${describe(reply)}, accounts ${before} → ${after}`, reply.location === "/signup?error=invalid_email" && after === before, reply.ms);
       },
     },
