@@ -83,6 +83,8 @@ import { getUploadOptions, parseUploadForm, validateUploadFile } from "@/lib/upl
 const bytes = {
   pdf: Buffer.from("%PDF-1.4\n% cross-test exam\n"),
   zip: Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x14, 0x00, 0x06, 0x00]),
+  docx: Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.from("[Content_Types].xml word/document.xml")]),
+  pptx: Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.from("[Content_Types].xml ppt/presentation.xml")]),
   png: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00]),
   jpg: Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]),
 };
@@ -203,6 +205,24 @@ describe("B. POST /api/admin/uploads — request handling", () => {
     expect(response.status).toBe(400);
     expect((await response.json()).reason).toBe("invalid_form");
   });
+  it("B-05 a streamed body with no Content-Length stops being read at the limit and gets 413", async () => {
+    let pulled = 0;
+    let cancelled = false;
+    const endless = new ReadableStream<Uint8Array>({
+      pull: controller => {
+        if (cancelled) return;
+        pulled += 1;
+        controller.enqueue(new Uint8Array(1024 * 1024));
+      },
+      cancel: () => { cancelled = true; },
+    });
+    const request = new Request("http://localhost/api/admin/uploads", { method: "POST", body: endless, headers: { "content-type": "multipart/form-data; boundary=x" }, duplex: "half" } as RequestInit);
+    const response = await record("POST /api/admin/uploads [admin-token] endless 1 MB chunks, no Content-Length", await POST(request));
+    expect(response.status).toBe(413);
+    expect((await response.json()).reason).toBe("file_too_large");
+    expect(pulled).toBeLessThan(30);
+    expect(cancelled).toBe(true);
+  });
   it("B-04 a non-numeric Content-Length header does not crash the route", async () => {
     const response = await upload(null, { headers: { "content-length": "abc", "content-type": "text/plain" }, body: "x" });
     expect(response.status).toBe(400);
@@ -218,7 +238,7 @@ describe("C. POST /api/admin/uploads — form fields", () => {
     expect(errors).not.toHaveBeenCalled();
   });
   it("C-02 valid material with only required fields returns 201", async () => {
-    const response = await upload(form({ category: "MATERIAL", title: "Lecture 1" }, new File([bytes.zip], "lecture1.pptx")));
+    const response = await upload(form({ category: "MATERIAL", title: "Lecture 1" }, new File([bytes.pptx], "lecture1.pptx")));
     expect(response.status).toBe(201);
     expect(fake.state.files.get("file-1")).toMatchObject({ category: "MATERIAL", storageKey: expect.stringMatching(/^materials\/[0-9a-f-]{36}\.pptx$/) });
   });
@@ -238,8 +258,6 @@ describe("C. POST /api/admin/uploads — form fields", () => {
     ["C-15 lowercase exam type", { examType: "final" }, "invalid_type"],
     ["C-16 exam type on a material", { category: "MATERIAL", examType: "FINAL" }, "type_not_allowed"],
     ["C-17 unknown term", { termId: "term-nope" }, "term_not_found"],
-    ["C-18 professor from another course", { professorId: "prof-b" }, "professor_not_assigned"],
-    ["C-19 professor that does not exist", { professorId: "prof-ghost" }, "professor_not_assigned"],
   ])("%s is refused with 400", async (_name, fields, reason) => {
     const response = await upload(form(fields));
     expect(response.status).toBe(400);
@@ -247,6 +265,16 @@ describe("C. POST /api/admin/uploads — form fields", () => {
     expect(await storedFiles()).toEqual([]);
     expect(fake.db.courseFile.create).not.toHaveBeenCalled();
     expect(logged()).toContainEqual(expect.objectContaining({ event: "upload_rejected", reason }));
+  });
+  it.each([
+    ["C-18 professor from another course", "prof-b"],
+    ["C-19 professor that does not exist", "prof-ghost"],
+  ])("%s is refused with 404, as the Sprint 1 plan says", async (_name, professorId) => {
+    const response = await upload(form({ professorId }));
+    expect(response.status).toBe(404);
+    expect((await response.json()).reason).toBe("professor_not_assigned");
+    expect(await storedFiles()).toEqual([]);
+    expect(fake.db.courseFile.create).not.toHaveBeenCalled();
   });
   it("C-20 unknown course is refused with 404", async () => {
     const response = await upload(form({ courseId: "course-ghost" }));
@@ -297,10 +325,15 @@ describe("D. POST /api/admin/uploads — file checks", () => {
     expect((await response.json()).reason).toBe(reason);
     expect(await storedFiles()).toEqual([]);
   });
-  it("D-10 a 20 MB + 1 byte file without a Content-Length header is still refused with 413", async () => {
-    const big = new Uint8Array(MAX_UPLOAD_BYTES + 1);
+  it("D-10 a file over the request limit without a Content-Length header is refused with 413", async () => {
+    const big = new Uint8Array(MAX_UPLOAD_BYTES + 1024 * 1024 + 1);
     big.set(bytes.pdf);
-    const response = await upload(form({}, new File([big], "big.pdf")));
+    // Sent as raw multipart bytes, like a network client: undici's own FormData body stream errors when cancelled.
+    const encoded = new Response(form({}, new File([big], "big.pdf")));
+    const body = new Uint8Array(await encoded.arrayBuffer());
+    const request = new Request("http://localhost/api/admin/uploads", { method: "POST", body, headers: { "content-type": encoded.headers.get("content-type")! } });
+    expect(request.headers.get("content-length")).toBeNull();
+    const response = await record(`POST /api/admin/uploads [admin-token] multipart bytes with file=<file big.pdf, ${big.length} B>, no Content-Length`, await POST(request));
     expect(response.status).toBe(413);
     expect(await storedFiles()).toEqual([]);
   });
@@ -327,8 +360,14 @@ describe("D. POST /api/admin/uploads — file checks", () => {
     expect(path.resolve(stored[0].parentPath, stored[0].name).startsWith(path.resolve(root) + path.sep)).toBe(true);
     expect(fake.state.files.get("file-1")).toMatchObject({ originalFileName: "evil.pdf" });
   });
-  it("D-16 OBSERVATION: any ZIP renamed to .docx/.pptx is accepted (only the 4-byte ZIP signature is checked)", async () => {
-    expect((await upload(form({}, new File([bytes.zip], "archive-renamed.docx")))).status).toBe(201);
+  it.each([
+    ["D-16 a plain ZIP renamed to .docx", "archive-renamed.docx", bytes.zip],
+    ["D-17 a DOCX renamed to .pptx", "notes-renamed.pptx", bytes.docx],
+  ])("%s is refused as corrupt", async (_name, fileName, content) => {
+    const response = await upload(form({}, new File([content], fileName)));
+    expect(response.status).toBe(400);
+    expect((await response.json()).reason).toBe("content_mismatch");
+    expect(await storedFiles()).toEqual([]);
   });
 });
 
@@ -385,8 +424,8 @@ describe("E. POST /api/admin/uploads — storage and record failures", () => {
 describe("F. Upload then GET /files/:fileId — file retrievable after upload", () => {
   it.each([
     ["F-01 PDF exam", "exam.pdf", "EXAM", bytes.pdf, "application/pdf", "inline"],
-    ["F-02 DOCX material", "notes.docx", "MATERIAL", bytes.zip, "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "attachment"],
-    ["F-03 PPTX material", "slides.pptx", "MATERIAL", bytes.zip, "application/vnd.openxmlformats-officedocument.presentationml.presentation", "attachment"],
+    ["F-02 DOCX material", "notes.docx", "MATERIAL", bytes.docx, "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "attachment"],
+    ["F-03 PPTX material", "slides.pptx", "MATERIAL", bytes.pptx, "application/vnd.openxmlformats-officedocument.presentationml.presentation", "attachment"],
     ["F-04 PNG exam", "scan.png", "EXAM", bytes.png, "image/png", "attachment"],
     ["F-05 JPG exam", "scan.jpg", "EXAM", bytes.jpg, "image/jpeg", "attachment"],
   ])("%s opens byte-for-byte with the right headers", async (_name, fileName, category, content, mimeType, disposition) => {
