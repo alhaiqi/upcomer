@@ -101,13 +101,14 @@ const doc = String.raw`\documentclass[10pt,a4paper]{article}
 \begin{tabular}{@{}ll@{}}
 \textbf{Project} & Upcomer, Sprint 1 \\
 \textbf{Tester} & Member 1 \\
-\textbf{Code tested} & \texttt{main} at \texttt{0e1f7d2} (after PR \#17); report built from commit \texttt{${commit}} \\
+\textbf{Code tested} & branch \texttt{member5\_after\_tests} (PR \#18): \texttt{main} at \texttt{0e1f7d2} plus the fixes below \\
+\textbf{Report commit} & \texttt{${commit}} \\
 \textbf{Test run} & ${runAt}, Vitest ${vitestVersion} on Node ${process.versions.node} \\
 \textbf{Test file} & \texttt{tests/unit/cross-test-member-5-uploads.test.ts} \\
 \end{tabular}
 
 \section*{Verdict}
-\textcolor{passgreen}{\textbf{${passed} of ${tests.length} tests pass}}, covering ${calls.length} recorded API calls. US-70 and US-71 meet every key check in the Sprint 1 plan: valid uploads, invalid or corrupt files, storage success and failure, and the file can be opened after upload. One item contradicts the written plan and is carried over from the first cross-test (Finding 1). The other findings are low-risk observations.
+\textcolor{passgreen}{\textbf{${passed} of ${tests.length} tests pass}}, covering ${calls.length} recorded API calls. US-70 and US-71 meet every key check in the Sprint 1 plan: valid uploads, invalid or corrupt files, storage success and failure, and the file can be opened after upload. The first run on \texttt{main} found one deviation from the plan and two weaknesses (Findings 1--3). All three are \textcolor{passgreen}{\textbf{fixed}} on this branch, and the tests now assert the fixed behaviour. Finding 4 is by design.
 
 \begin{longtable}{@{}P{7.5cm}rrr@{}}
 \toprule \textbf{Test group} & \textbf{Tests} & \textbf{Calls} & \textbf{Passed} \\ \midrule
@@ -119,10 +120,12 @@ ${groupSummary}
 \begin{tabular}{@{}ll@{}}
 \toprule \textbf{Check} & \textbf{Result} \\ \midrule
 Cross-test file & ${passed}/${tests.length} pass \\
-Whole unit suite with the new file & 480/480 pass, 28 files \\
+Whole unit suite & 484/484 pass, 28 files \\
 \texttt{npm run lint} & Pass \\
-\texttt{npx tsc --noEmit} & Pass (after \texttt{npx prisma generate} refreshed a stale local client) \\
-\texttt{npm run build}, \texttt{npm run test:e2e} & Not run: test-only change, no app code touched \\
+\texttt{npx tsc --noEmit} & Pass \\
+\texttt{npm run build} & Pass \\
+\texttt{npm run test:e2e} & 28/28 pass, against a production build and a real PostgreSQL 18.4 database \\
+\texttt{npm run reliability} & Not run \\
 \bottomrule
 \end{tabular}
 
@@ -145,23 +148,28 @@ Everything else is real code:
 \end{itemize}
 
 \section*{Findings}
-\subsection*{1. An unknown professor returns 400, but the plan says 404 (carried over, still open)}
-Covered by tests C-18 and C-19. The plan says \textquotedblleft an unknown course or professor returns 404\textquotedblright. An unknown course returns \textbf{404} (C-20). An unknown professor, or a professor who does not teach the course, returns \textbf{400 \texttt{professor\_not\_assigned}}. The check now lives in Member 4's shared \texttt{lib/file-metadata.ts}, so Members 4 and 5 should decide together. Either change the plan's wording or map \texttt{professor\_not\_assigned} to 404 in \texttt{STATUS} in \texttt{lib/uploads.ts}. The tests assert the current 400, so CI stays green until that decision is made.
+\begin{longtable}{@{}P{3.2cm}P{4.4cm}P{6.2cm}P{1.8cm}@{}}
+\toprule \textbf{Finding} & \textbf{On \texttt{main} (\texttt{0e1f7d2})} & \textbf{Fix on this branch} & \textbf{Tests} \\ \midrule \endhead
+1. Unknown professor & \textbf{400} \texttt{professor\_not\_assigned}; the plan says unknown course or professor returns 404 & \textcolor{passgreen}{\textbf{Fixed.}} Maps to \textbf{404} in \texttt{STATUS} in \texttt{lib/uploads.ts}. Only uploads change; the US-72 edit page keeps its own handling. & C-18, C-19 \\
+2. ZIP renamed to .docx/.pptx & Accepted (\textbf{201}) on the 4-byte ZIP signature alone & \textcolor{passgreen}{\textbf{Fixed.}} A DOCX must also contain \texttt{[Content\_Types].xml} and \texttt{word/}, a PPTX \texttt{[Content\_Types].xml} and \texttt{ppt/}. Otherwise \textbf{400} \texttt{content\_mismatch}. & D-16, D-17 \\
+3. No Content-Length header & The whole body was parsed in memory before the 20 MB check & \textcolor{passgreen}{\textbf{Fixed.}} The route streams the body, stops at 20 MB + 1 MB, cancels the stream and returns \textbf{413}. & B-05, D-10 \\
+\bottomrule
+\end{longtable}
 
-\subsection*{2. Observation: any ZIP renamed to .docx or .pptx is accepted}
-Covered by test D-16. Only the 4-byte ZIP signature is checked. The risk is low: only admins can upload, and non-PDF files are served as \texttt{attachment} with \texttt{nosniff}. A stricter check would look for \texttt{[Content\_Types].xml} inside the archive.
-
-\subsection*{3. Observation: without a Content-Length header, the whole body is read before the 20 MB check}
-Covered by test D-10. The early 413 depends on the header. Browsers always send it, and a request without it still gets a correct 413, but only after the full body has been parsed in memory.
+Shared files touched by the fixes:
+\begin{itemize}[nosep]
+\item \texttt{tests/unit/uploads.test.ts} (Member 5's tests): the DOCX/PPTX fixtures now contain the Office entry names, the professor case expects 404, and two corrupt-content cases were added.
+\item \texttt{tests/reliability/features/admin.ts}: the \textquotedblleft professor not teaching\textquotedblright{} check expects 404 (one line).
+\end{itemize}
 
 \subsection*{4. Note: a failed cleanup leaves one orphan file (by design, and logged)}
 Covered by test E-03. If both the database record and the file deletion fail, the file stays in storage. Both \texttt{upload\_cleanup\_failed} and \texttt{upload\_record\_failed} are logged.
 
 \subsection*{First report's defects, re-checked}
 \begin{longtable}{@{}P{7cm}P{9.5cm}@{}}
-\toprule \textbf{First report} & \textbf{Status on \texttt{0e1f7d2}} \\ \midrule
-e2e \texttt{getByRole("alert")} matched Next's route announcer & \textcolor{passgreen}{\textbf{Fixed}} in \texttt{2265875}: the locator is scoped to the upload form (checked in the code; e2e not run here) \\
-Unknown professor returns 400, not 404 & \textcolor{failred}{\textbf{Still open}}: see Finding 1 \\
+\toprule \textbf{First report} & \textbf{Status} \\ \midrule
+e2e \texttt{getByRole("alert")} matched Next's route announcer & \textcolor{passgreen}{\textbf{Fixed}} in \texttt{2265875}: the locator is scoped to the upload form; the e2e suite passes 28/28 \\
+Unknown professor returns 400, not 404 & \textcolor{passgreen}{\textbf{Fixed}} on this branch: see Finding 1 \\
 The upload API was open to anyone & \textcolor{passgreen}{\textbf{Fixed}} in \texttt{83f8b16}: tests A-01 to A-06 confirm 403 \\
 \bottomrule
 \end{longtable}
