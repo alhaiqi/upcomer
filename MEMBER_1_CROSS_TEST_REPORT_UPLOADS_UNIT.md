@@ -5,6 +5,38 @@
 
 This is a second, independent pass over Member 5's uploads. The first report (`MEMBER_1_CROSS_TEST_REPORT_UPLOADS.md`) tested the branch at `4f2a1a0`. Since then the upload code has changed 5 times: admin-only access, shared term and type fields, a scoped e2e locator, a type check that applies to exams only, and e2e cleanup. Member 5's own tests stay as their developer checks. These tests are separate and were written without changing any of Member 5's code.
 
+## Fixes on branch `member5`
+
+The findings below describe `main` at `0e1f7d2`. Branch `member5` fixes findings 1–3. Finding 4 is by design and is unchanged. On that branch the cross-test file has **75 tests**, all passing:
+- C-18 and C-19 now expect 404.
+- D-16 now expects a refusal.
+- D-17 is new: a DOCX renamed to `.pptx` is refused.
+- B-05 is new: an endless body with no `Content-Length` is cut off at the limit.
+
+| Finding | Fix | Files |
+|---|---|---|
+| 1. An unknown professor returned 400 | `professor_not_assigned` now maps to **404** in the upload `STATUS` table, as the plan says. Only uploads change; Member 4's metadata edit page (US-72) keeps its own handling. | `lib/uploads.ts` |
+| 2. Any ZIP renamed to `.docx` or `.pptx` was accepted | A DOCX must now contain the entry names `[Content_Types].xml` and `word/`, and a PPTX `[Content_Types].xml` and `ppt/`. ZIP stores entry names uncompressed, so this is a byte search with no unzip library. A plain archive, or a DOCX renamed to `.pptx`, gets `400 content_mismatch`. | `lib/uploads.ts` |
+| 3. Without `Content-Length`, the whole body was read before the size check | The route now reads the body as a stream and stops once it passes 20 MB + 1 MB of form overhead, then returns 413. Memory is capped whatever the header says. The early `Content-Length` rejection is kept. | `app/api/admin/uploads/route.ts` |
+
+**Shared files touched:**
+- `tests/reliability/features/admin.ts`: the "professor not teaching" check now expects 404. This is a one-line change.
+- `tests/unit/uploads.test.ts` (Member 5's tests):
+  - the DOCX and PPTX fixtures now include the Office entry names
+  - the professor case now expects 404
+  - 2 new corrupt-content cases were added
+
+**Checks on `member5`:**
+
+| Check | Result |
+|---|---|
+| `npm test` | 484/484 pass, 28 files |
+| `npm run lint` | Pass |
+| `npx tsc --noEmit` | Pass |
+| `npm run build` | Pass |
+| `npm run test:e2e` | **28/28 pass**, against a production build and a real PostgreSQL 18.4 database. These tests include browser uploads through the new streaming route. |
+| `npm run reliability` | Not run |
+
 ## Verdict
 
 **73 of 73 tests pass. US-70 and US-71 meet every key check in the Sprint 1 plan:** valid uploads, invalid or corrupt files, storage success and failure, and the file can be opened after upload.
