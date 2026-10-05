@@ -11,3 +11,5 @@ public/uploads/materials/
 
 # Reliability run output (npm run reliability); one example report is kept.
 /reports/*
+!/reports/reliability-2026-10-05.md
+!/reports/reliability-2026-10-05.json
