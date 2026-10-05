@@ -17,3 +17,19 @@ test("exam and material links open files without cross-course content", async ({
   expect(material.ok()).toBeTruthy();
   expect(material.headers()["content-type"]).toContain("application/pdf");
 });
+
+test("an unavailable file shows a page that links back", async ({ page }) => {
+  // The seeded record whose physical file is deliberately missing belongs to MATH201.
+  const missing = await page.goto("/files/file-missing");
+  expect(missing?.status()).toBe(404);
+  await expect(page.getByRole("heading", { name: "File unavailable" })).toBeVisible();
+  await expect(page.getByText("This file isn't available right now.")).toBeVisible();
+  await page.getByRole("link", { name: "Back to the course" }).click();
+  await expect(page).toHaveURL(/\/courses\/course-math201$/);
+
+  const unknown = await page.goto("/files/no-such-file");
+  expect(unknown?.status()).toBe(404);
+  await expect(page.getByText("no-such-file")).toHaveCount(0);
+  await page.getByRole("link", { name: "Browse courses" }).click();
+  await expect(page).toHaveURL(/\/$/);
+});
