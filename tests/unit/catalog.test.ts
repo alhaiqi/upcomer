@@ -49,6 +49,26 @@ describe("catalog search", () => {
       ] },
     }));
   });
+  it.each([
+    ["%", "\\%", "\\%"],
+    ["_", "\\_", "\\_"],
+    ["\\", "\\\\", "\\\\"],
+    ["100% c_s \\ 1", "100\\% c\\_s \\\\ 1", "100\\%c\\_s\\\\1"],
+  ])("matches %j literally instead of as a wildcard", async (query, spaced, compact) => {
+    findMany.mockResolvedValue([]);
+    await getCatalogCourses({ query });
+    expect(findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { OR: [
+        { code: { contains: spaced, mode: "insensitive" } },
+        { code: { contains: compact, mode: "insensitive" } },
+        { name: { contains: spaced, mode: "insensitive" } },
+      ] },
+    }));
+  });
+  it("ranks a search with wildcard characters by the text as typed", async () => {
+    findMany.mockResolvedValue([{ code: "A_100" }, { code: "A_1" }]);
+    expect((await getCatalogCourses({ query: "a_1" })).map(course => course.code)).toEqual(["A_1", "A_100"]);
+  });
   it("returns the exact code match first", async () => {
     findMany.mockResolvedValue([{ code: "EECE3501" }, { code: "MECH350" }, { code: "EECE350" }]);
     expect((await getCatalogCourses({ query: "eece 350" })).map(course => course.code)).toEqual(["EECE350", "EECE3501", "MECH350"]);
