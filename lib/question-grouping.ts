@@ -2,7 +2,7 @@
 // always gives the same groups in the same order.
 
 // "Q3.", "Question 2)", "3." or "(4)" at the start, and marks such as "(10 points)" or "[5 marks]" anywhere.
-const LEADING_NUMBER = /^\s*(?:(?:question|q)\s*\d+[a-z]?\s*[.):-]?|\d+[a-z]?\s*[.)]|\(\d+[a-z]?\))\s+/i;
+const LEADING_NUMBER = /^\s*(?:(?:question|q)\s*\d+[a-z]?\s*[.):-]?|\d+[a-z]?\s*[.)]|\(\d+[a-z]?\))(?:\s+|$)/i;
 const MARKS = /[([]\s*\d+(?:\.\d+)?\s*(?:points?|pts?|marks?)\s*[)\]]/gi;
 // Sentence punctuation is ignored; math symbols (+ - * / = < > ^ %) are kept, so "a+b" and "a-b" stay different questions.
 const PROSE_PUNCTUATION = /[.,;:!?'"`´‘’“”()[\]{}…]/g;
@@ -43,13 +43,14 @@ function editDistance(a: string, b: string, max: number) {
   return previous[b.length];
 }
 
-const MIN_TYPO_WORD_LENGTH = 5;
+const MIN_TYPO_WORD_LENGTH = 6;
 // Words per allowed typo: one typo in a short question, two from 16 words, and so on.
 const WORDS_PER_TYPO = 8;
 
 // Near-identical: the same words in the same order, except a few long words that differ by one typo
-// ("recieve"/"receive", "normalise"/"normalize"). Numbers, symbols, and short words such as acronyms must match exactly,
-// so "TCP"/"UDP" or "x^2"/"x^3" are different questions.
+// ("recieve"/"receive", "normalise"/"normalize"). A typo keeps the first letter, so real words such as "cable"/"table" or
+// "cyclic"/"acyclic" stay different. Numbers, symbols, and short words such as acronyms must match exactly, so "TCP"/"UDP"
+// or "x^2"/"x^3" are different questions.
 export function isNearIdentical(a: string, b: string) {
   if (a === b) return true;
   const wordsA = a.split(" ");
@@ -61,7 +62,7 @@ export function isNearIdentical(a: string, b: string) {
     const [wordA, wordB] = [wordsA[index], wordsB[index]];
     if (wordA === wordB) continue;
     const isTypo = wordA.length >= MIN_TYPO_WORD_LENGTH && wordB.length >= MIN_TYPO_WORD_LENGTH
-      && /^\p{L}+$/u.test(wordA) && /^\p{L}+$/u.test(wordB) && editDistance(wordA, wordB, 1) <= 1;
+      && wordA[0] === wordB[0] && /^\p{L}+$/u.test(wordA) && /^\p{L}+$/u.test(wordB) && editDistance(wordA, wordB, 1) <= 1;
     if (!isTypo || ++typos > allowed) return false;
   }
   return true;
