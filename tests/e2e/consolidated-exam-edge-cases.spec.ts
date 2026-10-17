@@ -108,10 +108,20 @@ test("question text and paper titles are shown as text, never run as HTML", asyn
   await expect(page.locator("li[data-tier] img, li[data-tier] b, li[data-tier] script")).toHaveCount(0);
   expect(dialog).toBe(false);
 
-  // A very long word wraps instead of widening the page on a phone.
+  // A very long word wraps instead of widening the exam on a phone. Only the exam content inside <main> is measured: the shared
+  // header is within a few pixels of 375px and its width depends on how the platform renders fonts.
   await page.setViewportSize({ width: 375, height: 800 });
   await page.reload();
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await expect(page.locator("li[data-tier]")).toHaveCount(2);
+  const tooWide = await page.locator("main").evaluate(main => {
+    const right = main.getBoundingClientRect().right - parseFloat(getComputedStyle(main).paddingRight) + 1;
+    const elements = [...main.querySelectorAll("li[data-tier]")].flatMap(card => [card, ...card.querySelectorAll("*")]);
+    const wide = elements.filter(element => element.getBoundingClientRect().right > right)
+      .map(element => `${element.tagName.toLowerCase()}.${element.className || "(no class)"} ${Math.round(element.getBoundingClientRect().width)}px`);
+    if (main.scrollWidth > main.clientWidth + 1) wide.push(`main scrolls: ${main.scrollWidth}px > ${main.clientWidth}px`);
+    return wide;
+  });
+  expect(tooWide, "elements wider than the exam content at 375px").toEqual([]);
 });
 
 // The reference: Y is the course's exam papers with at least one question; each stored group, in rank order, shows once with
