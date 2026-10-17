@@ -1,4 +1,5 @@
 import { db } from "@/lib/db";
+import { canViewFile, type FileViewer } from "@/lib/file-visibility";
 import { logError } from "@/lib/logger";
 import { readFile, realpath } from "node:fs/promises";
 import path from "node:path";
@@ -23,10 +24,15 @@ function isWithinRoot(root: string, file: string) {
   return relative !== "" && relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
 }
 
-export async function getOriginalFile(fileId: string) {
+export async function getOriginalFile(fileId: string, viewer?: FileViewer) {
   const record = await db.courseFile.findUnique({ where: { id: fileId } });
   if (!record) {
     logError("file_record_not_found", { fileId });
+    throw new FileUnavailableError("missing_record");
+  }
+  // A pending or rejected submission (US-13) looks exactly like a missing file to anyone but its submitter and admins.
+  if (!canViewFile(record, viewer)) {
+    logError("unpublished_file_access", { fileId, role: viewer?.role ?? "anonymous", userId: viewer?.id });
     throw new FileUnavailableError("missing_record");
   }
   let filePath;

@@ -32,7 +32,13 @@ type LogEvent =
   | "file_metadata_rejected"
   | "file_metadata_save_failed"
   | "file_metadata_retrieval_failed"
-  | "monitoring_alert_triggered";
+  | "monitoring_alert_triggered"
+  | "submission_refused"
+  | "submission_failed"
+  | "submission_rejected"
+  | "submission_review_failed"
+  | "submission_retrieval_failed"
+  | "unpublished_file_access";
 
 export type { LogEvent };
 export type LogLevel = "error" | "warn" | "info";
@@ -81,6 +87,13 @@ export const EVENT_LEVELS: Record<LogEvent, LogLevel> = {
   upload_cleanup_failed: "error",
   upload_failed: "error",
   upload_options_retrieval_failed: "error",
+  // Member 1 (Sprint 2): student submissions (US-13)
+  submission_refused: "warn",
+  submission_failed: "error",
+  submission_rejected: "info",
+  submission_review_failed: "error",
+  submission_retrieval_failed: "error",
+  unpublished_file_access: "warn",
 };
 
 // A refusal event that was caused by the database failing is a real failure, so it is raised to error.

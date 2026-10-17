@@ -1,12 +1,13 @@
 import { ExamType, FileCategory, type Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
+import { PUBLISHED_FILES } from "@/lib/file-visibility";
 import { logError } from "@/lib/logger";
 import { groupQuestions, normalizeQuestionText, rankGroups } from "@/lib/question-grouping";
 
 const errorType = (error: unknown) => (error instanceof Error ? error.name : "Unknown");
 
-// Only questions from exam papers are grouped; the course is always the paper's current course.
-const courseExams = (courseId: string): Prisma.CourseFileWhereInput => ({ courseId, category: FileCategory.EXAM });
+// Only questions from published exam papers are grouped (US-13); the course is always the paper's current course.
+const courseExams = (courseId: string): Prisma.CourseFileWhereInput => ({ courseId, category: FileCategory.EXAM, ...PUBLISHED_FILES });
 
 export type RebuildResult = { ok: true; groupCount: number; questionCount: number } | { ok: false; error: "not_found" | "unexpected" };
 
@@ -70,6 +71,8 @@ export function parseQuestionBankFilters(filters: QuestionBankFilters = {}) {
 const groupInclude = {
   course: { select: { id: true, code: true, name: true } },
   questions: {
+    // Defense in depth: the rebuild never groups an unpublished paper's questions (US-13).
+    where: { file: PUBLISHED_FILES },
     select: {
       id: true, number: true, text: true, fileId: true,
       file: { select: { id: true, title: true, year: true, examType: true, term: { select: { id: true, name: true } }, professor: { select: { id: true, name: true } } } },
@@ -113,7 +116,7 @@ export async function getQuestionBank(courseId: string, filters: QuestionBankFil
       db.questionGroup.findMany({
         // A group left with no questions (its papers were deleted) is skipped until the next rebuild.
         // One paper has to match every filter, so "2024" and "Final" means a 2024 final, not a 2024 midterm plus a final.
-        where: { courseId, questions: { some: Object.keys(paperFilter).length ? { file: paperFilter } : {} } },
+        where: { courseId, questions: { some: { file: { ...paperFilter, ...PUBLISHED_FILES } } } },
         include: groupInclude,
         orderBy: { rank: "asc" },
       }),
@@ -162,7 +165,7 @@ export async function getQuestionBankFilterOptions(courseId: string) {
 export async function getQuestionBankOverview() {
   try {
     const [papers, courses] = await Promise.all([
-      db.courseFile.findMany({ where: { category: FileCategory.EXAM, questions: { some: {} } }, select: { courseId: true, _count: { select: { questions: true } } } }),
+      db.courseFile.findMany({ where: { category: FileCategory.EXAM, ...PUBLISHED_FILES, questions: { some: {} } }, select: { courseId: true, _count: { select: { questions: true } } } }),
       db.course.findMany({ select: { id: true, code: true, name: true, _count: { select: { questionGroups: true } } }, orderBy: { code: "asc" } }),
     ]);
     const questionCounts = new Map<string, { papers: number; questions: number }>();

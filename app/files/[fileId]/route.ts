@@ -1,3 +1,4 @@
+import { getCurrentUser } from "@/lib/auth";
 import { FileUnavailableError, getOriginalFile } from "@/lib/files";
 import { errorCode, logError } from "@/lib/logger";
 
@@ -52,7 +53,8 @@ a:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 export async function GET(_request: Request, { params }: { params: Promise<{ fileId: string }> }) {
   const { fileId } = await params;
   try {
-    const { record, bytes } = await getOriginalFile(fileId);
+    // The viewer decides whether a pending or rejected submission can be opened (US-13).
+    const { record, bytes } = await getOriginalFile(fileId, await getCurrentUser());
     const safeName = record.originalFileName.replace(/[^\x20-\x7E]|["\\/;]/g, "_");
     const mimeType = record.mimeType || "application/octet-stream";
     const disposition = mimeType === "application/pdf" ? "inline" : "attachment";
@@ -62,6 +64,8 @@ export async function GET(_request: Request, { params }: { params: Promise<{ fil
         "Content-Disposition": `${disposition}; filename="${safeName}"`,
         "Content-Length": String(bytes.length),
         "X-Content-Type-Options": "nosniff",
+        // Only its submitter and admins can open an unpublished file, so no shared cache may keep it.
+        ...(record.status !== "PUBLISHED" && { "Cache-Control": "private, no-store" }),
       },
     });
   } catch (error) {

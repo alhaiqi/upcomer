@@ -121,7 +121,7 @@ function listTrial(category: "EXAM" | "MATERIAL") {
     name: `${segment} of an existing course`, valid: true,
     async run(ctx: Context) {
       const course = ctx.rng.pick(await ctx.db.course.findMany({ select: { id: true } }));
-      const expected = (await ctx.db.courseFile.findMany({ where: { courseId: course.id, category }, select: { id: true } })).map(file => file.id);
+      const expected = (await ctx.db.courseFile.findMany({ where: { courseId: course.id, category, status: "PUBLISHED" }, select: { id: true } })).map(file => file.id);
       const reply = await ctx.client().get(`/courses/${course.id}/${segment}`);
       const listed = fileLinks(reply.body);
       const foreign = listed.filter(id => !expected.includes(id)).length;
@@ -158,7 +158,7 @@ export const openFileFeature: Feature = {
     {
       name: "valid file", valid: true,
       async run(ctx) {
-        const files = await ctx.db.courseFile.findMany({ where: { storageKey: { not: { startsWith: "." } } }, select: { id: true, storageKey: true, mimeType: true } });
+        const files = await ctx.db.courseFile.findMany({ where: { status: "PUBLISHED", storageKey: { not: { startsWith: "." } } }, select: { id: true, storageKey: true, mimeType: true } });
         const available = [];
         for (const file of files) {
           const filePath = path.join(storageRoot(), file.storageKey);

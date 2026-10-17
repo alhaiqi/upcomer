@@ -1,5 +1,6 @@
 import { FileCategory } from "@prisma/client";
 import { db } from "@/lib/db";
+import { PUBLISHED_FILES } from "@/lib/file-visibility";
 import { isLowConfidence, tierFor, type LikelihoodTier } from "@/lib/likelihood-tiers";
 import { logError } from "@/lib/logger";
 import { getQuestionBank, type QuestionBankGroup } from "@/lib/question-bank";
@@ -59,7 +60,8 @@ export async function getConsolidatedExam(courseId: string): Promise<Consolidate
   // getQuestionBank logs its own failures; the paper list is logged here.
   const [bank, coursePapers] = await Promise.all([
     getQuestionBank(courseId),
-    db.courseFile.findMany({ where: { courseId, category: FileCategory.EXAM, questions: { some: {} } }, select: { id: true } }).catch(error => {
+    // Only published papers count (US-13): a pending or rejected submission never changes X or Y.
+    db.courseFile.findMany({ where: { courseId, category: FileCategory.EXAM, ...PUBLISHED_FILES, questions: { some: {} } }, select: { id: true } }).catch(error => {
       logError("question_bank_retrieval_failed", { courseId, source: "consolidated_exam", errorType: errorType(error) });
       throw error;
     }),
