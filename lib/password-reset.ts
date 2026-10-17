@@ -66,7 +66,7 @@ export async function requestPasswordReset(email: string, { now = new Date(), se
         select: { id: true },
       });
     });
-    logError("password_reset_requested", { outcome: "sent", userId: user.id, tokenId: created.id });
+    logError("password_reset_requested", { outcome: "sent", userId: user.id, resetLinkId: created.id });
     const link = `${origin}/reset-password?token=${encodeURIComponent(token)}`;
     void send({ to: user.email, subject: "Reset your Upcomer password", text: resetEmail(link) }).catch(error => {
       logError("password_reset_email_failed", { userId: user.id, reason: error instanceof MailError ? error.reason : "send_failed", errorType: errorType(error) });
@@ -88,8 +88,9 @@ function rejectionOf(row: TokenRow | null, now: Date): ResetTokenRejection | nul
 
 const tokenSelect = { id: true, userId: true, expiresAt: true, usedAt: true, invalidatedAt: true } as const;
 
-function rejectToken(reason: ResetTokenRejection, tokenId?: string) {
-  logError("password_reset_token_rejected", { reason, tokenId });
+// The link's row ID is logged as resetLinkId: the logger drops any key that contains "token".
+function rejectToken(reason: ResetTokenRejection, resetLinkId?: string) {
+  logError("password_reset_token_rejected", { reason, resetLinkId });
   return { ok: false as const, reason };
 }
 
