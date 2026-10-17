@@ -162,5 +162,6 @@ describe("getConsolidatedExam on random courses", () => {
       expect(html.match(/data-tier=/g)?.length ?? 0, context).toBe(exam.questions.length);
     }
     expect(mocks.logError).not.toHaveBeenCalled();
-  });
+    // 400 random courses take about 1 s alone but 5-6 s under the full parallel run, past the 5 s default.
+  }, 20_000);
 });
