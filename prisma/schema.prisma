@@ -40,20 +40,21 @@ enum Role {
 }
 
 model User {
-  id           String       @id @default(cuid())
-  email        String       @unique
-  passwordHash String
-  name         String
-  role         Role         @default(STUDENT)
+  id                  String               @id @default(cuid())
+  email               String               @unique
+  passwordHash        String
+  name                String
+  role                Role                 @default(STUDENT)
   // Profile (US-04), both optional and edited only by the user at /profile.
-  facultyId    String?
-  faculty      Faculty?     @relation(fields: [facultyId], references: [id], onDelete: SetNull)
-  major        String?
-  sessions     Session[]
-  enrollments  UserCourse[]
-  submissions  CourseFile[] @relation("SubmittedFiles")
-  createdAt    DateTime     @default(now())
-  updatedAt    DateTime     @updatedAt
+  facultyId           String?
+  faculty             Faculty?             @relation(fields: [facultyId], references: [id], onDelete: SetNull)
+  major               String?
+  sessions            Session[]
+  enrollments         UserCourse[]
+  submissions         CourseFile[]         @relation("SubmittedFiles")
+  passwordResetTokens PasswordResetToken[]
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
 
   @@index([facultyId])
 }
@@ -67,6 +68,23 @@ model Session {
   createdAt DateTime @default(now())
 
   @@index([userId])
+}
+
+// A password reset link (US-03). Like Session, only the SHA-256 hash of the random token is stored. A link works once,
+// until expiresAt, and only while it is the user's newest one; see lib/password-reset.ts.
+model PasswordResetToken {
+  id            String    @id @default(cuid())
+  userId        String
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash     String    @unique
+  expiresAt     DateTime
+  // Set when the password was changed with this link.
+  usedAt        DateTime?
+  // Set when a newer link replaced this one, or another link was used.
+  invalidatedAt DateTime?
+  createdAt     DateTime  @default(now())
+
+  @@index([userId, createdAt])
 }
 
 model UserCourse {
