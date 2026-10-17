@@ -1,8 +1,10 @@
 import { FileCategory, FileStatus } from "@prisma/client";
 import path from "node:path";
 import { db } from "@/lib/db";
+import { fileMetadataMessage } from "@/lib/file-metadata-rules";
 import { logError } from "@/lib/logger";
 import { rebuildQuestionBank } from "@/lib/question-bank";
+import { MAX_UPLOAD_LABEL } from "@/lib/upload-rules";
 import { saveUpload, UploadError, validateUploadFile, type UploadInput } from "@/lib/uploads";
 
 // Student submissions (US-13) and the review functions for the admin review page (US-74).
@@ -13,7 +15,6 @@ import { saveUpload, UploadError, validateUploadFile, type UploadInput } from "@
 export { canViewFile, PUBLISHED_FILES, type FileViewer } from "@/lib/file-visibility";
 
 export const MAX_REJECTION_REASON_LENGTH = 500;
-export const SUBMISSION_TYPES_LABEL = "PDF";
 
 const errorType = (error: unknown) => (error instanceof Error ? error.name : "Unknown");
 
@@ -21,6 +22,20 @@ const errorType = (error: unknown) => (error instanceof Error ? error.name : "Un
 export function validateSubmissionFile(fileName: string, bytes: Uint8Array) {
   if (path.extname(fileName).toLowerCase() !== ".pdf") throw new UploadError("unsupported_type", "Only PDF files can be submitted.");
   return validateUploadFile(fileName, bytes);
+}
+
+// The message for a reason from POST /api/submissions, shown on the submit page.
+export function submissionMessage(reason: string) {
+  switch (reason) {
+    case "unsupported_type": return "Only PDF files can be submitted.";
+    case "empty_file": return "The selected file is empty.";
+    case "file_too_large": return `The file is larger than ${MAX_UPLOAD_LABEL}.`;
+    case "content_mismatch": return "The file is corrupt or is not a real PDF.";
+    case "invalid_fields": return "Choose exam or material, enter a title of up to 150 characters, and choose a file.";
+    case "invalid_form": return "The submission could not be read. Please try again.";
+    case "storage_failed": case "record_failed": case "submission_failed": return "The file could not be saved. Please try again.";
+    default: return fileMetadataMessage(reason);
+  }
 }
 
 // Stores the file and creates its CourseFile as PENDING. Throws UploadError with the same reasons as an admin upload.

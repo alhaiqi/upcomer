@@ -167,6 +167,11 @@ p.card.muted { margin-bottom: 0; padding: 2.25rem 1.5rem; border-style: dashed; 
 .level-error { background: var(--danger-bg); color: var(--danger-text); }
 .level-warn { background: var(--warn-bg); color: var(--warn-text); }
 .level-info { background: var(--tint); color: var(--link); }
+/* Submission status (US-13), the same pill and tokens as the log levels. */
+.status-tag { display: inline-block; border-radius: 999px; padding: .1rem .55rem; font-size: .78rem; font-weight: 700; }
+.status-pending { background: var(--warn-bg); color: var(--warn-text); }
+.status-published { background: var(--tint); color: var(--success-text); }
+.status-rejected { background: var(--danger-bg); color: var(--danger-text); }
 
 /* ---------- Small screens ---------- */
 @media (max-width: 600px) {
