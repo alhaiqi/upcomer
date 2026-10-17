@@ -8,4 +8,4 @@ export function middleware(request: NextRequest) {
   return NextResponse.redirect(login);
 }
 
-export const config = { matcher: ["/my-courses", "/my-courses/:path*", "/submit", "/my-submissions", "/admin", "/admin/:path*"] };
+export const config = { matcher: ["/my-courses", "/my-courses/:path*", "/submit", "/my-submissions", "/profile", "/profile/:path*", "/admin", "/admin/:path*"] };

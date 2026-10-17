@@ -134,6 +134,8 @@ p.card.muted { margin-bottom: 0; padding: 2.25rem 1.5rem; border-style: dashed; 
 .form label .muted { font-weight: 400; font-size: .88rem; }
 .field { display: grid; gap: .35rem; font-size: .95rem; font-weight: 600; }
 .form .button { justify-self: start; margin-top: .25rem; }
+/* A read-only value in a form, such as the email on the profile (US-04). */
+.field-value { margin: 0; font-weight: 400; overflow-wrap: anywhere; }
 .form h2 { margin: 0; }
 .form-error, .form-success { margin: 0; border-radius: var(--radius-small); padding: .7rem 1rem; }
 .form-error { background: var(--danger-bg); color: var(--danger-text); }

@@ -38,7 +38,10 @@ type LogEvent =
   | "submission_rejected"
   | "submission_review_failed"
   | "submission_retrieval_failed"
-  | "unpublished_file_access";
+  | "unpublished_file_access"
+  | "profile_save_rejected"
+  | "profile_save_failed"
+  | "profile_retrieval_failed";
 
 export type { LogEvent };
 export type LogLevel = "error" | "warn" | "info";
@@ -94,6 +97,10 @@ export const EVENT_LEVELS: Record<LogEvent, LogLevel> = {
   submission_review_failed: "error",
   submission_retrieval_failed: "error",
   unpublished_file_access: "warn",
+  // Member 1 (Sprint 2): profile (US-04)
+  profile_save_rejected: "warn",
+  profile_save_failed: "error",
+  profile_retrieval_failed: "error",
 };
 
 // A refusal event that was caused by the database failing is a real failure, so it is raised to error.
