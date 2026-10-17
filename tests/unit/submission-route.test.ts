@@ -14,10 +14,8 @@ function submit(fields: Record<string, string> = {}, file: File | null = new Fil
   if (file) form.set("file", file);
   return new Request("http://localhost/api/submissions", { method: "POST", body: form });
 }
-const location = (response: Response) => {
-  const url = new URL(response.headers.get("location")!);
-  return url.pathname + url.search;
-};
+// Relative, so the browser keeps the host it used.
+const location = (response: Response) => response.headers.get("location");
 
 let errors: ReturnType<typeof vi.spyOn>;
 const logged = () => errors.mock.calls.map(call => JSON.parse(String(call[0])));

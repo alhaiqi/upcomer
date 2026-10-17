@@ -3,6 +3,9 @@ import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import { unlink } from "node:fs/promises";
 import path from "node:path";
+import { configureLogger } from "@/lib/logger";
+import { rebuildQuestionBank } from "@/lib/question-bank";
+import * as review from "@/lib/submissions";
 import "./fixtures";
 
 const expect = baseExpect.configure({ timeout: 15_000 });
@@ -25,15 +28,11 @@ const courseId = `qa-sub-course-${stamp}`;
 const PENDING_ONLY = `Which question only the pending paper has ${stamp}?`;
 
 const db = new PrismaClient();
-// Loaded after LOG_PERSIST is switched off, so calling the review functions here writes no log rows.
-let review: typeof import("@/lib/submissions");
-let rebuildQuestionBank: typeof import("@/lib/question-bank")["rebuildQuestionBank"];
 
 test.describe.configure({ mode: "serial" });
 test.beforeAll(async () => {
-  process.env.LOG_PERSIST = "off";
-  review = await import("@/lib/submissions");
-  ({ rebuildQuestionBank } = await import("@/lib/question-bank"));
+  // Calling the review functions here must not add rows to the shared log table.
+  configureLogger({ persist: false });
   const passwordHash = await bcrypt.hash(password, 10);
   await db.user.createMany({ data: Object.values(students).map(student => ({ ...student, passwordHash })) });
   await db.course.create({ data: { id: courseId, code: `US${stamp}`, name: `Submission Course ${stamp}`, facultyId: "faculty-eng" } });
@@ -91,17 +90,20 @@ async function fileIdOf(page: Page, title: string) {
   const href = await card(page, title).getByRole("link", { name: "Open Original File" }).getAttribute("href");
   return decodeURIComponent(href!.replace("/files/", ""));
 }
+// The status a file link gives. A logged-in check fetches from inside the page: the session cookie is Secure under`n// `next start`, which the browser sends to 127.0.0.1 but Playwright's own request context does not.
 const opens = async (request: APIRequestContext, fileId: string) => (await request.get(`/files/${encodeURIComponent(fileId)}`)).status();
+const opensFor = (page: Page, fileId: string) => page.evaluate(async url => (await fetch(url)).status, `/files/${encodeURIComponent(fileId)}`);
 
 test("a submitted PDF waits for review and is hidden from other students and visitors (acceptance test 1)", async ({ page, browser, request }) => {
   await logIn(page, students.a.email);
   await page.getByRole("link", { name: "Submit an exam or material" }).click();
   await expect(page.getByRole("heading", { name: "Submit an Exam or Material" })).toBeVisible();
+  // The professor list follows the chosen course.
+  await page.locator('select[name="courseId"]').selectOption("course-eece350");
   await page.getByLabel("Professor (optional)").selectOption({ label: "Professor A" });
   await page.getByLabel("Year (optional)").fill("2025");
   await page.getByLabel("Term (optional)").selectOption({ label: "Fall" });
   await page.getByLabel("Type (optional)").selectOption({ label: "Final" });
-  await page.locator('select[name="courseId"]').selectOption("course-eece350");
   await page.getByLabel("Title").fill(titles.pending);
   await page.getByLabel("File").setInputFiles(fixture);
   await page.getByRole("button", { name: "Submit for review" }).click();
@@ -114,7 +116,7 @@ test("a submitted PDF waits for review and is hidden from other students and vis
   expect(await db.courseFile.findUniqueOrThrow({ where: { id: fileId } })).toMatchObject({ status: "PENDING", submittedById: students.a.id, termId: "term-fall", examType: "FINAL", year: 2025 });
 
   // The submitter can open it, but it is on no course page, not even theirs.
-  expect(await opens(page.request, fileId)).toBe(200);
+  expect(await opensFor(page, fileId)).toBe(200);
   await page.goto("/courses/course-eece350/exams");
   await expect(page.getByRole("heading", { name: "Previous Exams" })).toBeVisible();
   await expect(page.getByText(titles.pending)).toHaveCount(0);
@@ -128,7 +130,7 @@ test("a submitted PDF waits for review and is hidden from other students and vis
     await expect(otherPage.getByText(titles.pending)).toHaveCount(0);
     await otherPage.goto("/my-submissions");
     await expect(otherPage.getByText(titles.pending)).toHaveCount(0);
-    expect(await opens(otherPage.request, fileId)).toBe(404);
+    expect(await opensFor(otherPage, fileId)).toBe(404);
     await otherPage.goto(`/files/${encodeURIComponent(fileId)}`);
     await expect(otherPage.getByRole("heading", { name: "File unavailable" })).toBeVisible();
   } finally {
@@ -169,9 +171,9 @@ test("the student sees a rejection with its reason, and a published file reaches
     await logIn(otherPage, students.b.email);
     await otherPage.goto("/courses/course-eece330/materials");
     await expect(otherPage.getByText(titles.published)).toBeVisible();
-    expect(await opens(otherPage.request, publishedId)).toBe(200);
+    expect(await opensFor(otherPage, publishedId)).toBe(200);
     // The rejected one stays hidden.
-    expect(await opens(otherPage.request, pendingId)).toBe(404);
+    expect(await opensFor(otherPage, pendingId)).toBe(404);
   } finally {
     await other.close();
   }
