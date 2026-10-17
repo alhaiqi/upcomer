@@ -9,11 +9,12 @@ const messages: Record<string, string> = {
   unexpected: "Something went wrong. Please try again.",
 };
 
-export default async function LoginPage({ searchParams }: { searchParams: Promise<{ error?: string; next?: string; registered?: string }> }) {
-  const { error, next: requestedNext, registered } = await searchParams;
+export default async function LoginPage({ searchParams }: { searchParams: Promise<{ error?: string; next?: string; registered?: string; reset?: string }> }) {
+  const { error, next: requestedNext, registered, reset } = await searchParams;
   const next = safeNext(requestedNext, "");
   return <><h1>Log In</h1><p className="muted">Log in to open My Courses.</p>
     {registered && <p className="notice" role="status">Account created. Log in to continue.</p>}
+    {reset && <p className="notice" role="status">Your password was changed. Log in with your new password.</p>}
     {error && <p className="notice error" role="alert">{messages[error] ?? messages.unexpected}</p>}
     <form className="card form" action={logInAction}>
       {next && <input type="hidden" name="next" value={next} />}
@@ -21,6 +22,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
       <label className="field"><span>Password</span><input type="password" name="password" autoComplete="current-password" required /></label>
       <button className="button" type="submit">Log in</button>
     </form>
+    <p className="muted"><Link href="/forgot-password">Forgot password?</Link></p>
     <p className="muted">No account yet? <Link href={next ? `/signup?next=${encodeURIComponent(next)}` : "/signup"}>Create one</Link>.</p>
   </>;
 }

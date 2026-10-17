@@ -29,6 +29,6 @@ describe("login redirect middleware", () => {
     expect(location(response)).toBeNull();
   });
   it("covers My Courses and the admin area only, so browsing stays open", () => {
-    expect(config.matcher).toEqual(["/my-courses", "/my-courses/:path*", "/admin", "/admin/:path*"]);
+    expect(config.matcher).toEqual(["/my-courses", "/my-courses/:path*", "/submit", "/my-submissions", "/profile", "/profile/:path*", "/admin", "/admin/:path*"]);
   });
 });

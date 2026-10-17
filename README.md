@@ -45,8 +45,11 @@ The seed is repeatable and includes one record for a deliberately missing physic
 | `/admin/uploads/materials` | Upload a course material; optional `courseId` query parameter preselects the course |
 | `POST /api/admin/uploads` | Stores an uploaded file and creates its `CourseFile` record |
 | `/signup` | Create an account; optional `error` and `next` query parameters |
-| `/login` | Log in; optional `error`, `next`, and `registered` query parameters |
+| `/login` | Log in; optional `error`, `next`, `registered`, and `reset` query parameters. Links to `/forgot-password` |
+| `/forgot-password` | Ask for a password reset link; optional `sent` query parameter. Always shows the same message |
+| `/reset-password` | Set a new password with a reset link's `token`; optional `error` query parameter |
 | `/my-courses` | The logged-in student's courses; requires a session |
+| `/profile` | Edit your own name, faculty, and major; requires a session. `/profile/:id` and `/profile/:id/edit` redirect to `/profile` for your own ID and show the not-found page for anyone else's |
 | `/admin/catalog` | Catalog management menu; admins only |
 | `/admin/catalog/faculties`, `/courses`, `/professors`, `/terms` | List and add entries; optional `saved`, `error`, and `value` query parameters |
 | `/admin/catalog/:section/:id` | Edit one faculty, course, professor, or term |
@@ -54,6 +57,9 @@ The seed is repeatable and includes one record for a deliberately missing physic
 | `/admin/files/:id` | Edit one file's course, professor, year, term, type, and topic; optional `error` query parameter |
 | `/admin/questions` | Extracted question counts per course and a "Regroup and rank" button; optional `rebuilt`, `groups`, and `error` query parameters; admins only |
 | `/admin/monitoring` | Logged errors and warnings, the 24-hour summary, and the alert status; optional `level`, `event`, and `range` query parameters; admins only |
+| `/submit` | Submit a past exam or course material for review; optional `error`, `courseId`, and `category` query parameters; requires a session |
+| `/my-submissions` | The logged-in student's submissions with their status and, if rejected, the reason; optional `submitted` query parameter; requires a session |
+| `POST /api/submissions` | Stores a submitted PDF as a `PENDING` `CourseFile` and redirects (303) to `/my-submissions` or back to `/submit` with the reason |
 
 ## Team integration
 
@@ -202,6 +208,95 @@ US-15a (group identical and near-identical questions), US-16 (rank questions by 
 
 The keyword is never logged. Tests are in `tests/unit/question-grouping.test.ts`, `tests/unit/question-bank.test.ts`, `tests/unit/question-bank-pages.test.tsx`, and `tests/e2e/question-bank.spec.ts`. `npm run db:seed` adds sample questions to the two EECE350 exams. Shared files changed: `prisma/schema.prisma`, `prisma/seed.ts`, `lib/logger.ts` (the four events above), `app/courses/[courseId]/page.tsx` (Question Bank card), `app/admin/catalog/page.tsx` (Question bank card), and `app/globals.css` (`.question-list`).
 
+## Submissions (US-13)
+
+A logged-in student can submit a past exam or course material at `/submit` (linked from My Courses). It waits for an admin's review and only its submitter and admins can see it until it is published. `/my-submissions` lists the student's submissions with their status and, if rejected, the reason.
+
+- **Model** (migration `20261017000000_file_submissions`). `CourseFile` gained:
+  - `status` (`FileStatus`: `PENDING`, `PUBLISHED`, `REJECTED`). It defaults to `PUBLISHED`, so every older file, every admin upload, and both seeds are unchanged.
+  - `submittedById` (the student; null for admin uploads; set to null if the account is deleted).
+  - `rejectionReason` (set only when the status is `REJECTED`).
+  - `reviewedAt`.
+
+  A submission starts as `PENDING`. An admin publishes it or rejects it with a reason. Both outcomes are final.
+- **Visibility.** `PUBLISHED_FILES` and `canViewFile` (`lib/file-visibility.ts`, re-exported from `lib/submissions.ts`) are the one rule. The course exam and material lists, the question bank (grouping, paper counts, filter options, admin overview), and the consolidated exam (`X of Y`) read published files only, for everyone. `/files/:id` opens an unpublished file for its submitter and admins only, with `Cache-Control: private, no-store`. Anyone else gets the usual "File unavailable" 404, without a course link, so the file's existence isn't revealed. `/admin/files` lists every status and tags pending and rejected files.
+- **File rules.** PDF only. Then the admin upload's checks: not empty, at most 20 MB, real `%PDF-` content, and safe storage as `exams/<uuid>.pdf` or `materials/<uuid>.pdf`. The metadata fields and rules are the shared ones (`lib/file-metadata.ts`): course, optional professor teaching it, year, term, type (exams only), and topic. A refusal returns to the form with the reason, keeping the course and category.
+- **Review functions** (`lib/submissions.ts`, for the admin review page, US-74):
+  - `listPendingSubmissions()`: oldest first, with course, professor, term, and submitter `{ id, name }`.
+  - `publishSubmission(fileId)`: for an exam, also runs `rebuildQuestionBank`.
+  - `rejectSubmission(fileId, reason)`: the reason is required, trimmed, and at most 500 characters.
+
+  Both review functions return `{ ok: true, id, courseId }` or `{ ok: false, error: "not_found" | "not_pending" | "reason_required" | "reason_too_long" }`. Each one is a single conditional update, so two admins can never both review one file. They don't check the caller, so call `requireAdmin()` first.
+
+> **For everyone reading `CourseFile` or `Question`:** any student-facing query, and anything that processes files, must add `...PUBLISHED_FILES` to its `CourseFile` filter.
+> - **Mohammed (US-74, admin review):** build on the three review functions above.
+> - **Ali Slim (US-14, extraction):** extract published exams only. Publishing already regroups.
+> - **Lea (US-17 to US-19):** `getConsolidatedExam` already has the filter; any new paper query needs it too.
+
+Refused and failed submissions are logged as `submission_refused` (with the reason) and `submission_failed`. Admin rejections are logged as `submission_rejected`. Attempts to open a hidden file are logged as `unpublished_file_access`. These log IDs and reasons only, never titles, file names, topics, or the rejection reason.
+
+Tests are in `tests/unit/submissions.test.ts`, `tests/unit/submission-route.test.ts`, `tests/unit/submission-pages.test.tsx`, and `tests/e2e/student-submissions.spec.ts`. The e2e spec creates its own two students and one course and deletes them, the submitted files, and their stored copies at the end. Shared files changed:
+- `prisma/schema.prisma`
+- `lib/uploads.ts` (optional `submission` argument to `saveUpload`)
+- `lib/courses.ts`, `lib/files.ts`, `app/files/[fileId]/route.ts`, `lib/question-bank.ts`, `lib/consolidated-exam.ts` (the published filter)
+- `lib/logger.ts`
+- `middleware.ts`
+- `app/my-courses/page.tsx` (links)
+- `app/admin/files/page.tsx` (status tag)
+- `app/globals.css` (`.status-tag`)
+- `tests/reliability/features/browsing.ts`
+- their unit tests
+
+## Profile (US-04)
+
+A logged-in user edits their own profile at `/profile`, linked as "Profile" in the header. The email is shown but can't be changed here, since it is the login.
+
+- **Fields** (migration `20261018000000_user_profile`):
+  - `User.name`: required, at most 100 characters, with spaces trimmed and collapsed.
+  - `User.facultyId`: optional, chosen from the `Faculty` list; set to null if the faculty is deleted.
+  - `User.major`: optional, short free text, at most 100 characters.
+
+  An empty faculty or major clears it. The limits and messages are in `lib/profile-rules.ts`, shared with the form.
+- **Whose profile.** Always the session user's (`requireUser("/profile")`). The server action reads only `name`, `facultyId`, and `major`, so an ID added to the form is ignored. `/profile/:id` and `/profile/:id/edit` send your own ID to `/profile`. Anyone else's ID gets the not-found page, the same as other denied pages, without saying whether the account exists, and is logged as `unauthorized_access`. A visitor is sent to log in.
+- **Errors** such as "Enter your name." appear above the form, and the form keeps what was typed. The typed values come back through the action's state (`useActionState`), not the URL, so a name never lands in a link or in browser history. Nothing is saved, so the stored profile keeps its old values.
+
+Refused saves are logged as `profile_save_rejected` (with the reason), and failures as `profile_save_failed` and `profile_retrieval_failed`. Only the user ID, reason, and error type or code are logged, never a name, major, or email.
+
+The service is `lib/profile.ts`, the action is `lib/profile-actions.ts`, the pages are `app/profile/page.tsx` and `app/profile/[...path]/page.tsx`, and the form is `components/profile-form.tsx`. Tests are in `tests/unit/profile.test.ts`, `tests/unit/profile-pages.test.tsx`, and `tests/e2e/profile.spec.ts`, which creates its own students and faculty and deletes them. Shared files changed:
+- `prisma/schema.prisma`
+- `lib/logger.ts`
+- `middleware.ts` (`/profile`)
+- `app/layout.tsx` (Profile link)
+- `app/globals.css` (`.field-value`)
+- `tests/unit/middleware.test.ts`
+
+## Password reset (US-03)
+
+"Forgot password?" on `/login` leads to `/forgot-password`. After any request, the page shows the same message: "If an account exists for that email, we've sent a link to reset your password. The link works once and expires in 30 minutes." The link opens `/reset-password?token=…`, which takes a new password under the sign-up rules (at least 8 characters, typed twice).
+
+- **Links** (migration `20261019000000_password_reset`, table `PasswordResetToken`):
+  - The token is 32 random bytes. Only its SHA-256 hash is stored, as for sessions.
+  - A link expires after 30 minutes and works once.
+  - A new request replaces every older unused link.
+  - Links older than 24 hours are deleted the next time the same user asks for one.
+- **A reset** checks the password first. A weak or mismatched password is refused without using up the link. The link is then claimed in one transaction with a conditional update, so two tabs can't both use it. The same transaction changes the password, logs out **all** of that user's sessions, and replaces the other links. Used, expired, replaced, and unknown links each get a clear message and a "Request a new link" button. The page sends no Referer (`referrer: no-referrer`), so the token doesn't leak to other sites.
+- **Neutral answers.** Registered, unregistered, and malformed emails all redirect to the same `/forgot-password?sent=1`.
+- **Rate limit.** At most 3 links per account per 15 minutes. Further requests show the same message and send nothing, so the limit doesn't reveal whether the email exists.
+- **Mail** (`lib/mail.ts`):
+  - **With a provider.** Set `MAIL_API_URL`, `MAIL_API_KEY`, and `MAIL_FROM` to send through an HTTP mail API. The module posts `{ from, to, subject, text }` as JSON with `Authorization: Bearer <key>`, which is Resend's format (`https://api.resend.com/emails`); a provider with a different format needs a change to `sendMail`.
+  - **Link origin.** Set `APP_URL` to the site's public origin. Links are never built from the request's Host header.
+  - **Development without a provider.** `npm run dev` prints the email, including the link, to the server terminal, in a block marked `DEV ONLY`. `APP_URL` defaults to `http://localhost:3000` there.
+  - **Production or tests without a provider.** Nothing is printed and nothing is sent. The request is logged as `password_reset_email_failed` with the reason `not_configured` or `app_url_not_configured`.
+  - The link and token are never logged anywhere, including the log database.
+- **Monitoring.** See the events table. Only IDs, reasons, and error types are logged, never emails, tokens, links, or passwords. A link is identified by its row ID, `resetLinkId`, because the logger drops any key containing "token".
+- **Known limitation.** The email is sent in the background, so a slow provider doesn't make a registered email answer later. A registered email still costs a few more database reads and writes than an unknown one, so the response times can differ slightly.
+
+The service is `lib/password-reset.ts`, the actions are `lib/password-reset-actions.ts`, and the pages are `app/forgot-password/page.tsx` and `app/reset-password/page.tsx`. Tests are in `tests/unit/password-reset.test.ts`, `tests/unit/password-reset-pages.test.tsx`, `tests/unit/mail.test.ts`, and `tests/e2e/password-reset.spec.ts`. The e2e test creates its own student, makes links through `requestPasswordReset` with a capturing sender, and deletes the student, which also removes its links and sessions. Shared files changed:
+- `prisma/schema.prisma`
+- `lib/logger.ts`
+- `app/login/page.tsx` (link and notice)
+- `.env.example`
+
 ## Authentication and My Courses (Member 1)
 
 `/signup`, `/login`, and `/my-courses` cover US-01 (create an account), US-02 (log in and log out), and US-07 (add a course to My Courses). Sessions are rows in the database, not JWTs, so logging out really revokes the session.
@@ -291,7 +386,16 @@ The levels live in one table, `EVENT_LEVELS` in `lib/logger.ts`, and TypeScript 
 | 4 | `catalog_entry_save_failed`, `catalog_admin_retrieval_failed`, `file_metadata_save_failed`, `file_metadata_retrieval_failed` | error | entity, IDs, `operation`, `errorType` |
 | 4 | `monitoring_alert_triggered` | info | `count`, `threshold`, `windowMinutes`, `events`, `webhook` |
 | 5 | `upload_rejected` | warn | `reason`, `courseId`, `resourceCategory` |
-| 5 | `upload_storage_failed`, `upload_record_failed`, `upload_cleanup_failed`, `upload_failed`, `upload_options_retrieval_failed` | error | `courseId`, `resourceCategory`, `errorType`, `errorCode` |
+| 5 | `upload_storage_failed`, `upload_record_failed`, `upload_cleanup_failed`, `upload_failed`, `upload_options_retrieval_failed` | error | `courseId`, `resourceCategory`, `errorType`, `errorCode`; `source=submission` for a student submission |
+| 1 (Sprint 2) | `submission_refused` | warn | `reason`, `courseId`, `resourceCategory`, `userId` |
+| 1 (Sprint 2) | `submission_failed`, `submission_retrieval_failed`, `submission_review_failed` | error | `courseId`, `resourceCategory`, `userId`, `fileId`, `entity`, `operation`, `errorType` |
+| 1 (Sprint 2) | `submission_rejected` | info | `fileId` (never the reason) |
+| 1 (Sprint 2) | `unpublished_file_access` | warn | `fileId`, `role`, `userId` |
+| 1 (Sprint 2) | `profile_save_rejected` | warn | `userId`, `reason` |
+| 1 (Sprint 2) | `profile_save_failed`, `profile_retrieval_failed` | error | `userId`, `entity`, `errorType`, `errorCode` |
+| 1 (Sprint 2) | `password_reset_requested`, `password_reset_completed` | info | `outcome` (`sent` or `unknown_email`), `userId`, `resetLinkId`, `sessionsEnded` |
+| 1 (Sprint 2) | `password_reset_rate_limited`, `password_reset_token_rejected`, `password_reset_rejected` | warn | `userId`, `reason` (`used`, `expired`, `superseded`, `unknown`, `weak_password`, `password_mismatch`), `resetLinkId` |
+| 1 (Sprint 2) | `password_reset_failed`, `password_reset_email_failed` | error | `stage`, `userId`, `reason`, `errorType`, `errorCode` |
 
 ### What is never logged
 

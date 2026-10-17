@@ -7,11 +7,30 @@ const { getOriginalFile, FileUnavailableError } = vi.hoisted(() => ({
   },
 }));
 vi.mock("@/lib/files", () => ({ getOriginalFile, FileUnavailableError }));
+const { getCurrentUser } = vi.hoisted(() => ({ getCurrentUser: vi.fn() }));
+vi.mock("@/lib/auth", () => ({ getCurrentUser }));
 import { GET } from "@/app/files/[fileId]/route";
 
 const context = { params: Promise.resolve({ fileId: "file-a" }) };
 // A block body: a function returned from beforeEach would run as teardown and call the mock again.
-beforeEach(() => { getOriginalFile.mockReset(); });
+beforeEach(() => { getOriginalFile.mockReset(); getCurrentUser.mockReset().mockResolvedValue(null); });
+
+describe("unpublished submissions (US-13)", () => {
+  it("passes the logged-in viewer to the file lookup", async () => {
+    const viewer = { id: "student-a", role: "STUDENT" };
+    getCurrentUser.mockResolvedValue(viewer);
+    getOriginalFile.mockResolvedValue({ record: { originalFileName: "exam.pdf", mimeType: "application/pdf", status: "PUBLISHED" }, bytes: Buffer.from("%PDF-") });
+    const response = await GET(new Request("http://localhost/files/file-a"), context);
+    expect(getOriginalFile).toHaveBeenCalledWith("file-a", viewer);
+    expect(response.headers.get("cache-control")).toBeNull();
+  });
+  it("keeps an unpublished file out of shared caches", async () => {
+    getOriginalFile.mockResolvedValue({ record: { originalFileName: "exam.pdf", mimeType: "application/pdf", status: "PENDING" }, bytes: Buffer.from("%PDF-") });
+    const response = await GET(new Request("http://localhost/files/file-a"), context);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+  });
+});
 
 describe("original file route", () => {
   it("returns original bytes and PDF headers", async () => {

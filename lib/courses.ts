@@ -1,5 +1,6 @@
 import { FileCategory } from "@prisma/client";
 import { db } from "@/lib/db";
+import { PUBLISHED_FILES } from "@/lib/file-visibility";
 import { logError } from "@/lib/logger";
 
 export async function getCourseById(courseId: string) {
@@ -17,7 +18,8 @@ export async function getCourseById(courseId: string) {
 async function getCourseFiles(courseId: string, category: FileCategory) {
   try {
     return await db.courseFile.findMany({
-      where: { courseId, category },
+      // Pending and rejected submissions (US-13) are never listed.
+      where: { courseId, category, ...PUBLISHED_FILES },
       include: { professor: true, term: true },
       orderBy: [{ year: "desc" }, { createdAt: "desc" }],
     });

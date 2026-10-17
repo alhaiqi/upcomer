@@ -12,6 +12,7 @@ model Faculty {
   code      String   @unique
   name      String
   courses   Course[]
+  users     User[]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -39,15 +40,23 @@ enum Role {
 }
 
 model User {
-  id           String       @id @default(cuid())
-  email        String       @unique
-  passwordHash String
-  name         String
-  role         Role         @default(STUDENT)
-  sessions     Session[]
-  enrollments  UserCourse[]
-  createdAt    DateTime     @default(now())
-  updatedAt    DateTime     @updatedAt
+  id                  String               @id @default(cuid())
+  email               String               @unique
+  passwordHash        String
+  name                String
+  role                Role                 @default(STUDENT)
+  // Profile (US-04), both optional and edited only by the user at /profile.
+  facultyId           String?
+  faculty             Faculty?             @relation(fields: [facultyId], references: [id], onDelete: SetNull)
+  major               String?
+  sessions            Session[]
+  enrollments         UserCourse[]
+  submissions         CourseFile[]         @relation("SubmittedFiles")
+  passwordResetTokens PasswordResetToken[]
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+
+  @@index([facultyId])
 }
 
 model Session {
@@ -59,6 +68,23 @@ model Session {
   createdAt DateTime @default(now())
 
   @@index([userId])
+}
+
+// A password reset link (US-03). Like Session, only the SHA-256 hash of the random token is stored. A link works once,
+// until expiresAt, and only while it is the user's newest one; see lib/password-reset.ts.
+model PasswordResetToken {
+  id            String    @id @default(cuid())
+  userId        String
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash     String    @unique
+  expiresAt     DateTime
+  // Set when the password was changed with this link.
+  usedAt        DateTime?
+  // Set when a newer link replaced this one, or another link was used.
+  invalidatedAt DateTime?
+  createdAt     DateTime  @default(now())
+
+  @@index([userId, createdAt])
 }
 
 model UserCourse {
@@ -107,6 +133,13 @@ enum ExamType {
   OTHER
 }
 
+// Review state of a file (US-13). Only PUBLISHED files are shown to students or processed; see lib/submissions.ts.
+enum FileStatus {
+  PENDING
+  PUBLISHED
+  REJECTED
+}
+
 model CourseFile {
   id               String       @id @default(cuid())
   courseId         String
@@ -124,12 +157,23 @@ model CourseFile {
   topic            String?
   mimeType         String?
   sizeBytes        Int?
+  // Admin uploads and files from before US-13 are PUBLISHED; student submissions start as PENDING.
+  status           FileStatus   @default(PUBLISHED)
+  // The student who submitted the file; null for admin uploads.
+  submittedById    String?
+  submittedBy      User?        @relation("SubmittedFiles", fields: [submittedById], references: [id], onDelete: SetNull)
+  // Shown to the submitter; set only when the status is REJECTED.
+  rejectionReason  String?
+  // When an admin published or rejected the submission.
+  reviewedAt       DateTime?
   questions        Question[]
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
 
   @@index([courseId, category])
   @@index([termId])
+  @@index([status, createdAt])
+  @@index([submittedById])
 }
 
 enum LogLevel {

@@ -1,4 +1,4 @@
-import { FileCategory } from "@prisma/client";
+import { FileCategory, type FileStatus } from "@prisma/client";
 import { randomUUID } from "node:crypto";
 import { mkdir, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -60,7 +60,10 @@ export function parseUploadForm(form: FormData, now = new Date()) {
   return { ...metadata.metadata, category: category as FileCategory, title, file };
 }
 
-export async function saveUpload(input: UploadInput) {
+// A student submission (US-13) is saved the same way, but waits for review instead of being published.
+export type UploadSubmission = { status: FileStatus; submittedById: string };
+
+export async function saveUpload(input: UploadInput, submission?: UploadSubmission) {
   const { extension, mimeType } = validateUploadFile(input.fileName, input.bytes);
   const invalid = await checkFileMetadata(input);
   if (invalid) throw new UploadError(invalid, fileMetadataMessage(invalid));
@@ -68,7 +71,7 @@ export async function saveUpload(input: UploadInput) {
 
   const storageKey = `${input.category === FileCategory.EXAM ? "exams" : "materials"}/${randomUUID()}.${extension}`;
   const filePath = resolveStoragePath(storageKey);
-  const context = { courseId: course.id, resourceCategory: input.category };
+  const context = { courseId: course.id, resourceCategory: input.category, source: submission ? "submission" : undefined };
   try {
     await mkdir(path.dirname(filePath), { recursive: true });
     await writeFile(filePath, input.bytes, { flag: "wx" });
@@ -82,6 +85,7 @@ export async function saveUpload(input: UploadInput) {
         courseId: course.id, professorId: input.professorId, title: input.title, category: input.category,
         originalFileName: path.basename(input.fileName.replaceAll("\\", "/")).slice(0, 255), storageKey,
         year: input.year, termId: input.termId, examType: input.examType, topic: input.topic, mimeType, sizeBytes: input.bytes.length,
+        ...submission,
       },
     });
   } catch (error) {

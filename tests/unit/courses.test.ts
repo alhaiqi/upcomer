@@ -15,11 +15,11 @@ describe("course service", () => {
   it("queries only the requested course's exams", async () => {
     findMany.mockResolvedValue([{ id: "exam-a" }]);
     expect(await getCourseExams("a")).toEqual([{ id: "exam-a" }]);
-    expect(findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { courseId: "a", category: "EXAM" } }));
+    expect(findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { courseId: "a", category: "EXAM", status: "PUBLISHED" } }));
   });
   it("queries only the requested course's materials", async () => {
     findMany.mockResolvedValue([{ id: "material-a" }]);
     expect(await getCourseMaterials("a")).toEqual([{ id: "material-a" }]);
-    expect(findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { courseId: "a", category: "MATERIAL" } }));
+    expect(findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { courseId: "a", category: "MATERIAL", status: "PUBLISHED" } }));
   });
 });

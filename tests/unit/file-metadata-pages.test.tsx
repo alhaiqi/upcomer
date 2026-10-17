@@ -48,6 +48,13 @@ describe("admin files list", () => {
     expect(html).toContain('aria-label="Edit Final Exam 2025"');
     expect(getAdminFiles).toHaveBeenCalledWith(undefined);
   });
+  it("tags pending and rejected submissions as hidden from students (US-13)", async () => {
+    getAdminFiles.mockResolvedValue([{ ...listed, id: "file-p", status: "PENDING" }, { ...listed, id: "file-r", status: "REJECTED" }, { ...listed, status: "PUBLISHED" }]);
+    const html = renderToStaticMarkup(await AdminFilesPage(query()));
+    expect(html).toContain('class="status-tag status-pending">Pending review<');
+    expect(html).toContain('class="status-tag status-rejected">Rejected<');
+    expect(html.match(/Not visible to students/g)).toHaveLength(2);
+  });
   it("filters by course", async () => {
     const html = renderToStaticMarkup(await AdminFilesPage(query({ courseId: "course-eece330" })));
     expect(getAdminFiles).toHaveBeenCalledWith("course-eece330");

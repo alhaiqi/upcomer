@@ -56,8 +56,24 @@ describe("getConsolidatedExam", () => {
     const exam = await getConsolidatedExam(course.id);
     expect(exam.questions.map(question => [question.position, question.rank, question.id])).toEqual([[1, 1, "g1"], [2, 2, "g2"], [3, 3, "g3"]]);
     expect(new Set(exam.questions.map(question => question.id)).size).toBe(exam.questions.length);
-    expect(mocks.findGroups).toHaveBeenCalledWith(expect.objectContaining({ where: { courseId: course.id, questions: { some: {} } }, orderBy: { rank: "asc" } }));
-    expect(mocks.findFiles).toHaveBeenCalledWith({ where: { courseId: course.id, category: "EXAM", questions: { some: {} } }, select: { id: true } });
+    expect(mocks.findGroups).toHaveBeenCalledWith(expect.objectContaining({ where: { courseId: course.id, questions: { some: { file: { status: "PUBLISHED" } } } }, orderBy: { rank: "asc" } }));
+    expect(mocks.findFiles).toHaveBeenCalledWith({ where: { courseId: course.id, category: "EXAM", status: "PUBLISHED", questions: { some: {} } }, select: { id: true } });
+  });
+  it("never lets a pending or rejected submission change X, Y, or the questions (US-13)", async () => {
+    const before = await getConsolidatedExam(course.id);
+    // A submitted paper that slipped into the stored groups: the published-only paper list (Y) leaves it out.
+    const pending = paper("pending", 2027);
+    const withPending = [
+      { ...stored[0], paperCount: 5, questions: [...stored[0].questions, { id: "g1-pending", number: 1, text: stored[0].text, fileId: "pending", file: pending }] },
+      stored[1], stored[2],
+      { ...group("g4", 4, "A question only the pending paper has.", []), paperCount: 1, questions: [{ id: "g4-q0", number: 2, text: "A question only the pending paper has.", fileId: "pending", file: pending }] },
+    ];
+    mocks.findGroups.mockResolvedValue(withPending);
+    const after = await getConsolidatedExam(course.id);
+    expect(after.totalPapers).toBe(before.totalPapers);
+    expect(after.questions.map(question => [question.id, question.paperCount, question.totalPapers]))
+      .toEqual(before.questions.map(question => [question.id, question.paperCount, question.totalPapers]));
+    expect(after.questions.flatMap(question => question.papers.map(item => item.id))).not.toContain("pending");
   });
   it("shows the full text of a question with sub-parts together (US-18)", async () => {
     const exam = await getConsolidatedExam(course.id);

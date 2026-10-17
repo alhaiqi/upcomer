@@ -40,7 +40,7 @@ describe("rebuildQuestionBank", () => {
     expect(await rebuildQuestionBank("course-a")).toEqual({ ok: true, groupCount: 2, questionCount: 4 });
     expect(mocks.executeRaw).toHaveBeenCalledTimes(1);
     expect(mocks.executeRaw.mock.calls[0].slice(1)).toEqual(["course-a"]);
-    expect(mocks.findQuestions).toHaveBeenCalledWith(expect.objectContaining({ where: { file: { courseId: "course-a", category: "EXAM" } } }));
+    expect(mocks.findQuestions).toHaveBeenCalledWith(expect.objectContaining({ where: { file: { courseId: "course-a", category: "EXAM", status: "PUBLISHED" } } }));
     expect(mocks.deleteGroups).toHaveBeenCalledWith({ where: { courseId: "course-a", normalizedText: { notIn: ["define a socket", "explain arp"] } } });
     expect(mocks.upsertGroup.mock.calls.map(([call]) => [call.where.courseId_normalizedText.normalizedText, call.update])).toEqual([
       ["define a socket", { text: "Define a socket.", paperCount: 2, rank: 1 }],
@@ -105,8 +105,8 @@ describe("getQuestionBank", () => {
     mocks.countFiles.mockResolvedValue(3);
     mocks.findGroups.mockResolvedValue(groups);
     const bank = await getQuestionBank("course-a");
-    expect(mocks.countFiles).toHaveBeenCalledWith({ where: { courseId: "course-a", category: "EXAM", questions: { some: {} } } });
-    expect(mocks.findGroups).toHaveBeenCalledWith(expect.objectContaining({ where: { courseId: "course-a", questions: { some: {} } }, orderBy: { rank: "asc" } }));
+    expect(mocks.countFiles).toHaveBeenCalledWith({ where: { courseId: "course-a", category: "EXAM", status: "PUBLISHED", questions: { some: {} } } });
+    expect(mocks.findGroups).toHaveBeenCalledWith(expect.objectContaining({ where: { courseId: "course-a", questions: { some: { file: { status: "PUBLISHED" } } } }, orderBy: { rank: "asc" } }));
     expect(bank.totalPapers).toBe(3);
     expect(bank.groups.map(group => group.id)).toEqual(["g-socket", "g-arp", "g-port"]);
     expect(bank.groups[0]).toEqual({
@@ -133,7 +133,7 @@ describe("getQuestionBank", () => {
     mocks.findGroups.mockResolvedValue([groups[0], groups[2]]);
     const bank = await getQuestionBank("course-a", { query: "socket", year: "2023", termId: "term-fall", examType: "FINAL", professorId: "prof-a" });
     expect(mocks.findGroups).toHaveBeenCalledWith(expect.objectContaining({
-      where: { courseId: "course-a", questions: { some: { file: { year: 2023, termId: "term-fall", examType: "FINAL", professorId: "prof-a" } } } },
+      where: { courseId: "course-a", questions: { some: { file: { year: 2023, termId: "term-fall", examType: "FINAL", professorId: "prof-a", status: "PUBLISHED" } } } },
       orderBy: { rank: "asc" },
     }));
     expect(bank.groups.map(group => group.id)).toEqual(["g-socket"]);
@@ -170,7 +170,7 @@ describe("getQuestionBankFilterOptions", () => {
       terms: [{ id: "term-fall", name: "Fall" }, { id: "term-spring", name: "Spring" }],
       professors: [{ id: "prof-a", name: "Professor A" }, { id: "prof-b", name: "Professor B" }],
     });
-    expect(mocks.findFiles).toHaveBeenCalledWith(expect.objectContaining({ where: { courseId: "course-a", category: "EXAM", questions: { some: {} } } }));
+    expect(mocks.findFiles).toHaveBeenCalledWith(expect.objectContaining({ where: { courseId: "course-a", category: "EXAM", status: "PUBLISHED", questions: { some: {} } } }));
   });
   it("logs and rethrows a failure", async () => {
     mocks.findFiles.mockRejectedValue(failure("PrismaClientInitializationError"));

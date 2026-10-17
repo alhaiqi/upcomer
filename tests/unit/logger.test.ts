@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const { saveLogEntry, getOriginalFile } = vi.hoisted(() => ({ saveLogEntry: vi.fn(), getOriginalFile: vi.fn() }));
 vi.mock("@/lib/log-store", () => ({ saveLogEntry }));
 vi.mock("@/lib/files", () => ({ getOriginalFile, FileUnavailableError: class FileUnavailableError extends Error {} }));
+vi.mock("@/lib/auth", () => ({ getCurrentUser: vi.fn().mockResolvedValue(null) }));
 import { configureLogger, defaultStoreLoader, errorCode, EVENT_LEVELS, levelOf, logError, MAX_VALUE_LENGTH, sanitizeContext, type LogEvent } from "@/lib/logger";
 import { GET } from "@/app/files/[fileId]/route";
 
