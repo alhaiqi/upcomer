@@ -12,6 +12,7 @@ model Faculty {
   code      String   @unique
   name      String
   courses   Course[]
+  users     User[]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -44,11 +45,17 @@ model User {
   passwordHash String
   name         String
   role         Role         @default(STUDENT)
+  // Profile (US-04), both optional and edited only by the user at /profile.
+  facultyId    String?
+  faculty      Faculty?     @relation(fields: [facultyId], references: [id], onDelete: SetNull)
+  major        String?
   sessions     Session[]
   enrollments  UserCourse[]
   submissions  CourseFile[] @relation("SubmittedFiles")
   createdAt    DateTime     @default(now())
   updatedAt    DateTime     @updatedAt
+
+  @@index([facultyId])
 }
 
 model Session {
