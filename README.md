@@ -45,7 +45,9 @@ The seed is repeatable and includes one record for a deliberately missing physic
 | `/admin/uploads/materials` | Upload a course material; optional `courseId` query parameter preselects the course |
 | `POST /api/admin/uploads` | Stores an uploaded file and creates its `CourseFile` record |
 | `/signup` | Create an account; optional `error` and `next` query parameters |
-| `/login` | Log in; optional `error`, `next`, and `registered` query parameters |
+| `/login` | Log in; optional `error`, `next`, `registered`, and `reset` query parameters. Links to `/forgot-password` |
+| `/forgot-password` | Ask for a password reset link; optional `sent` query parameter. Always shows the same message |
+| `/reset-password` | Set a new password with a reset link's `token`; optional `error` query parameter |
 | `/my-courses` | The logged-in student's courses; requires a session |
 | `/profile` | Edit your own name, faculty, and major; requires a session. `/profile/:id` and `/profile/:id/edit` redirect to `/profile` for your own ID and show the not-found page for anyone else's |
 | `/admin/catalog` | Catalog management menu; admins only |
@@ -268,6 +270,33 @@ The service is `lib/profile.ts`, the action is `lib/profile-actions.ts`, the pag
 - `app/globals.css` (`.field-value`)
 - `tests/unit/middleware.test.ts`
 
+## Password reset (US-03)
+
+"Forgot password?" on `/login` leads to `/forgot-password`. After any request, the page shows the same message: "If an account exists for that email, we've sent a link to reset your password. The link works once and expires in 30 minutes." The link opens `/reset-password?token=…`, which takes a new password under the sign-up rules (at least 8 characters, typed twice).
+
+- **Links** (migration `20261019000000_password_reset`, table `PasswordResetToken`):
+  - The token is 32 random bytes. Only its SHA-256 hash is stored, as for sessions.
+  - A link expires after 30 minutes and works once.
+  - A new request replaces every older unused link.
+  - Links older than 24 hours are deleted the next time the same user asks for one.
+- **A reset** checks the password first. A weak or mismatched password is refused without using up the link. The link is then claimed in one transaction with a conditional update, so two tabs can't both use it. The same transaction changes the password, logs out **all** of that user's sessions, and replaces the other links. Used, expired, replaced, and unknown links each get a clear message and a "Request a new link" button. The page sends no Referer (`referrer: no-referrer`), so the token doesn't leak to other sites.
+- **Neutral answers.** Registered, unregistered, and malformed emails all redirect to the same `/forgot-password?sent=1`.
+- **Rate limit.** At most 3 links per account per 15 minutes. Further requests show the same message and send nothing, so the limit doesn't reveal whether the email exists.
+- **Mail** (`lib/mail.ts`):
+  - **With a provider.** Set `MAIL_API_URL`, `MAIL_API_KEY`, and `MAIL_FROM` to send through an HTTP mail API. The module posts `{ from, to, subject, text }` as JSON with `Authorization: Bearer <key>`, which is Resend's format (`https://api.resend.com/emails`); a provider with a different format needs a change to `sendMail`.
+  - **Link origin.** Set `APP_URL` to the site's public origin. Links are never built from the request's Host header.
+  - **Development without a provider.** `npm run dev` prints the email, including the link, to the server terminal, in a block marked `DEV ONLY`. `APP_URL` defaults to `http://localhost:3000` there.
+  - **Production or tests without a provider.** Nothing is printed and nothing is sent. The request is logged as `password_reset_email_failed` with the reason `not_configured` or `app_url_not_configured`.
+  - The link and token are never logged anywhere, including the log database.
+- **Monitoring.** See the events table. Only IDs, reasons, and error types are logged, never emails, tokens, links, or passwords. A link is identified by its row ID, `resetLinkId`, because the logger drops any key containing "token".
+- **Known limitation.** The email is sent in the background, so a slow provider doesn't make a registered email answer later. A registered email still costs a few more database reads and writes than an unknown one, so the response times can differ slightly.
+
+The service is `lib/password-reset.ts`, the actions are `lib/password-reset-actions.ts`, and the pages are `app/forgot-password/page.tsx` and `app/reset-password/page.tsx`. Tests are in `tests/unit/password-reset.test.ts`, `tests/unit/password-reset-pages.test.tsx`, `tests/unit/mail.test.ts`, and `tests/e2e/password-reset.spec.ts`. The e2e test creates its own student, makes links through `requestPasswordReset` with a capturing sender, and deletes the student, which also removes its links and sessions. Shared files changed:
+- `prisma/schema.prisma`
+- `lib/logger.ts`
+- `app/login/page.tsx` (link and notice)
+- `.env.example`
+
 ## Authentication and My Courses (Member 1)
 
 `/signup`, `/login`, and `/my-courses` cover US-01 (create an account), US-02 (log in and log out), and US-07 (add a course to My Courses). Sessions are rows in the database, not JWTs, so logging out really revokes the session.
@@ -364,6 +393,9 @@ The levels live in one table, `EVENT_LEVELS` in `lib/logger.ts`, and TypeScript 
 | 1 (Sprint 2) | `unpublished_file_access` | warn | `fileId`, `role`, `userId` |
 | 1 (Sprint 2) | `profile_save_rejected` | warn | `userId`, `reason` |
 | 1 (Sprint 2) | `profile_save_failed`, `profile_retrieval_failed` | error | `userId`, `entity`, `errorType`, `errorCode` |
+| 1 (Sprint 2) | `password_reset_requested`, `password_reset_completed` | info | `outcome` (`sent` or `unknown_email`), `userId`, `resetLinkId`, `sessionsEnded` |
+| 1 (Sprint 2) | `password_reset_rate_limited`, `password_reset_token_rejected`, `password_reset_rejected` | warn | `userId`, `reason` (`used`, `expired`, `superseded`, `unknown`, `weak_password`, `password_mismatch`), `resetLinkId` |
+| 1 (Sprint 2) | `password_reset_failed`, `password_reset_email_failed` | error | `stage`, `userId`, `reason`, `errorType`, `errorCode` |
 
 ### What is never logged
 
