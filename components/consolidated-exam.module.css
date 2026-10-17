@@ -1,0 +1,15 @@
+.section { margin-top: 2rem; }
+.section h2 { margin: 0 0 .25rem; }
+.section h2 .count { color: var(--muted); font-size: .95rem; font-weight: 600; }
+.section > p { margin: 0 0 1rem; }
+.questions { margin: 0; padding: 0; list-style: none; }
+/* Line breaks in the extracted text separate a question's sub-parts. */
+.text { margin: .25rem 0 .5rem; font-weight: 600; white-space: pre-line; overflow-wrap: anywhere; }
+.badge { display: inline-block; margin-left: .5rem; border-radius: 999px; padding: .05rem .55rem; font-size: .74rem; letter-spacing: .04em; }
+.VERY_LIKELY { background: var(--accent-soft); color: var(--accent-text); }
+.LIKELY { background: var(--tint); color: var(--link); }
+.RARE { border: 1px solid var(--border); color: var(--muted); }
+.sources { margin-top: .5rem; font-size: .95rem; }
+.sources summary { width: fit-content; color: var(--link); font-weight: 600; cursor: pointer; }
+.sources ul { margin: .5rem 0 0; padding-left: 1.25rem; }
+.sources li { margin: .2rem 0; }
