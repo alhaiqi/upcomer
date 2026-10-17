@@ -1,11 +1,12 @@
 # Upcomer Sprint 2 — Member 1 Implementation Report
 
-Mustafa Ergaibi, branch `feature/mustafa-sprint-2`. This report covers US-13 and US-04. US-03 will be added to it on the same branch.
+Mustafa Ergaibi, branch `feature/mustafa-sprint-2`. This report covers US-13, US-04, and US-03.
 
 ## Scope
 
 - US-13: Submit a past exam or course material for admin review.
 - US-04: Manage my profile information (see [US-04](#us-04-manage-my-profile)).
+- US-03: Reset a forgotten password (see [US-03](#us-03-reset-a-forgotten-password)).
 
 Not included: the admin review page is Mohammed Al-Haiqi's US-74, and question extraction is Ali Slim's US-14. The model and functions below are the hand-off point for both.
 
@@ -195,8 +196,76 @@ Names, majors, and emails are never logged; a unit test checks this.
 
 - **Sign-up has no maximum name length** (`validateCredentials` in `lib/auth.ts`). An account created with a name over 100 characters can still log in, but its profile can't be saved until the name is shortened. The fix is a matching limit at sign-up, for whoever owns sign-up.
 
+## US-03: Reset a forgotten password
+
+### Architecture
+
+| Area | Files | Responsibility |
+| --- | --- | --- |
+| Schema | `prisma/schema.prisma`, `prisma/migrations/20261019000000_password_reset` | `PasswordResetToken`: `userId` (deleted with the user), `tokenHash` (unique), `expiresAt`, `usedAt`, `invalidatedAt`, `createdAt` |
+| Mail | `lib/mail.ts` | `sendMail` posts to an HTTP mail API when `MAIL_API_URL`, `MAIL_API_KEY`, and `MAIL_FROM` are set. Without them, it prints a block marked "DEV ONLY" in development and throws `not_configured` everywhere else. `appOrigin` reads `APP_URL` (localhost only in development) |
+| Service | `lib/password-reset.ts` | `requestPasswordReset`, `checkResetToken`, `resetPassword`. No Next.js imports, so the e2e test can call it |
+| Actions | `lib/password-reset-actions.ts` | `requestResetAction` always redirects to `/forgot-password?sent=1`. `resetPasswordAction` goes to `/login?reset=1`, or back with an error code |
+| Pages | `app/forgot-password/page.tsx`, `app/reset-password/page.tsx`, `app/login/page.tsx` | The request form, the new-password form or the rejection message, and the "Forgot password?" link and the notice after a reset |
+
+### User stories and behavior
+
+| Acceptance test | Behavior |
+| --- | --- |
+| 1. A registered email gets a single-use link that expires | The token is 32 random bytes; only its SHA-256 hash is stored. It expires after 30 minutes, and a new request replaces older unused links. At most 3 links per account per 15 minutes |
+| 2. A valid link sets a new password; the old one stops working and the new one logs in | The password is checked first with the sign-up rules (at least 8 characters, typed twice), and a refusal leaves the link usable. Then one transaction claims the link with a conditional update (so it can't be used twice, even from two tabs), sets the new bcrypt hash, deletes **all** of the user's sessions, and replaces their other links |
+| 3. An unregistered email gets the same neutral message | Every request ends at the same URL with the same message, including a rate-limited one. The email is sent in the background, so a slow provider doesn't make a registered email answer later |
+| 4. A used or expired link is rejected | Used, expired, replaced, and unknown links each show a clear message and a "Request a new link" button. A link that expires while its form is open is rejected when the form is submitted. The page sends no Referer |
+
+### Monitoring
+
+| Event | Level | Context |
+| --- | --- | --- |
+| `password_reset_requested` | info | `outcome` (`sent` or `unknown_email`), `userId`, `resetLinkId` |
+| `password_reset_rate_limited` | warn | `userId` |
+| `password_reset_token_rejected` | warn | `reason` (`used`, `expired`, `superseded`, `unknown`), `resetLinkId` |
+| `password_reset_rejected` | warn | `reason` (`weak_password`, `password_mismatch`) |
+| `password_reset_completed` | info | `userId`, `sessionsEnded` |
+| `password_reset_failed` | error | `stage`, `errorType`, `errorCode` |
+| `password_reset_email_failed` | error | `userId`, `reason` (`not_configured`, `provider_rejected`, `provider_unreachable`, `app_url_not_configured`), `errorType` |
+
+Emails, tokens, links, and passwords are never logged; unit tests check this. A link is logged by its row ID as `resetLinkId`, because the logger drops any key containing "token". The development-only terminal block is the one place a link is printed, and it never goes through the logger.
+
+### Shared files changed
+
+- `tests/unit/consolidated-exam-edge-cases.test.tsx` (Lea), **at Lea's request**, in its own commit (`0283291`): the "matches the reference and keeps every invariant" test gets a 20-second timeout and a one-line comment. Nothing it checks changed. This fixes the timeout noted under US-13 and US-04.
+- `prisma/schema.prisma` and the migration. The SQL file starts at the SQL, `migration_lock.toml` is unchanged, and `prisma migrate diff` reports no drift.
+- `lib/logger.ts`: the seven events.
+- `app/login/page.tsx`: the "Forgot password?" link and the `reset=1` notice.
+- `.env.example`: empty `APP_URL`, `MAIL_API_URL`, `MAIL_API_KEY`, and `MAIL_FROM`, with a comment.
+- `README.md`: the routes, the events, and a "Password reset (US-03)" section.
+- `lib/auth.ts` is only imported (`normalizeEmail`, `PASSWORD_MIN_LENGTH`, `BCRYPT_COST`), not changed.
+
+### Tests and checks performed
+
+| Test file | Tests | Covers |
+| --- | --- | --- |
+| `tests/unit/password-reset.test.ts` | 25 | A hashed, random, 30-minute token; older links replaced; unknown and malformed emails; the rate limit; a send failure and a missing `APP_URL`; every rejection reason; the race-safe claim; password refusals that keep the link; session logout; database failures; no email, token, or password in any log line |
+| `tests/unit/password-reset-pages.test.tsx` | 14 | The neutral message and redirect for any email, the new-password form, each rejection message with the new-link button, `no-referrer`, the action's redirects (never echoing the password), and the login link and notice |
+| `tests/unit/mail.test.ts` | 6 | The dev-only print in development only, nothing printed in production or tests, the provider request, refused and unreachable providers, `appOrigin` |
+| `tests/e2e/password-reset.spec.ts` | 4 | AT1 through the UI (only a 64-character hash stored, expiry about 30 minutes out); AT2 with a mismatched confirmation first, the old password refused, the new one logging in, and a second browser logged out; AT3 (same URL and text, no link row); AT4 (used, expired, expired while open, replaced, made up, and missing). It creates its own student and deletes it, which removes its links and sessions |
+
+| Command | Result |
+| --- | --- |
+| `npm test` | Passed: 653 tests in 43 files, including Lea's random-course test with its new timeout |
+| `npm run lint` | Passed |
+| `npx tsc --noEmit` | Passed |
+| `npm run build` | Passed |
+| `npx prisma migrate deploy`, `npm run db:seed` | Applied `20261019000000_password_reset` to the database in `.env` (Neon), with the user's go-ahead |
+| `npm run test:e2e` | Passed: 58 tests, with no dev server running. A check afterwards found no leftover test users, links, or sessions |
+
+### Found while testing, not changed
+
+- **The e2e run can raise the monitoring alert.** The test server has no `APP_URL` or mail provider, so each run logs `password_reset_email_failed` twice (the UI requests in AT1 and AT3). Running the reset spec alone and then the whole suite within 10 minutes reached the alert threshold (5 errors), together with an existing `physical_file_not_found`. No webhook is configured, so nothing was sent. Setting `APP_URL` alone wouldn't help: with no provider, the server would still log `not_configured`. A fix would be a test-only mail sink or an alert filter, for the team to decide.
+- **Timing.** A registered email still costs a few more database reads and writes than an unknown one, so the answer times can differ slightly. This is documented in the README.
+
 ## Remaining work
 
 - US-74 (Mohammed): the admin review page on top of `listPendingSubmissions`, `publishSubmission`, and `rejectSubmission`.
 - US-14 (Ali Slim): extraction of published exams only.
-- US-03 on this branch.
+- Choosing and configuring a mail provider before US-03 can send real emails (`APP_URL`, `MAIL_API_URL`, `MAIL_API_KEY`, `MAIL_FROM`).
