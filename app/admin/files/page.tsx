@@ -26,7 +26,7 @@ export default async function AdminFilesPage({ searchParams }: { searchParams: P
     {unknownCourse && <p className="muted" role="status">The selected course doesn&apos;t exist.</p>}
     {files.length ? <ul className="list catalog-list">{files.map(file => <li className="card" key={file.id}>
       <span className="eyebrow">{file.course.code} · {file.category === "EXAM" ? "Exam" : "Material"}</span><h3>{file.title}</h3>
-      {file.status !== "PUBLISHED" && <p className="muted"><span className={`status-tag status-${file.status.toLowerCase()}`}>{file.status === "PENDING" ? "Pending review" : "Rejected"}</span> Not visible to students (US-13).</p>}
+      {(file.status === "PENDING" || file.status === "REJECTED") && <p className="muted"><span className={`status-tag status-${file.status.toLowerCase()}`}>{file.status === "PENDING" ? "Pending review" : "Rejected"}</span> Not visible to students (US-13).</p>}
       <p className="muted">{[
         file.examType && examTypeLabel(file.examType), file.term?.name, file.year, file.professor?.name, file.topic,
       ].filter(Boolean).join(" · ") || "No details yet."}</p>
