@@ -1,4 +1,5 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
+import { PrismaClient } from "@prisma/client";
 
 test("a student browses, searches and filters courses, then opens one", async ({ page }) => {
   await page.goto("/");
@@ -50,6 +51,52 @@ test("a search with no match shows a no-results message", async ({ page }) => {
   await page.getByRole("button", { name: "Search" }).click();
   await expect(page.getByText("No courses found.")).toBeVisible();
   await expect(page.locator("article")).toHaveCount(0);
+});
+
+test.describe("search text with LIKE wildcard characters", () => {
+  const stamp = String(Date.now()).slice(-8);
+  const course = { id: `e2e-wildcard-${stamp}`, code: `WC${stamp}`, name: `Wildcard 100%_off ${stamp}` };
+  const db = new PrismaClient();
+
+  test.beforeAll(async () => {
+    const faculty = await db.faculty.findFirstOrThrow({ select: { id: true } });
+    await db.course.create({ data: { ...course, facultyId: faculty.id } });
+  });
+  // Remove the course this block adds so it does not pile up in the shared database.
+  test.afterAll(async () => {
+    try {
+      await db.course.deleteMany({ where: { id: course.id } });
+    } finally {
+      await db.$disconnect();
+    }
+  });
+
+  const search = async (page: Page, text: string) => {
+    await page.goto(`/?${new URLSearchParams({ q: text })}`);
+    await expect(page.getByRole("searchbox", { name: "Search courses" })).toHaveValue(text);
+  };
+  const card = (page: Page, code: string) => page.locator("article").filter({ has: page.getByText(code, { exact: true }) });
+
+  for (const text of ["%", "_"]) {
+    test(`searching ${JSON.stringify(text)} matches it literally`, async ({ page }) => {
+      await search(page, text);
+      await expect(card(page, course.code)).toHaveCount(1);
+      // A seeded course without the character must not match.
+      await expect(card(page, "EECE350")).toHaveCount(0);
+    });
+  }
+
+  test("searching a backslash finds no courses without one", async ({ page }) => {
+    await search(page, "\\");
+    await expect(page.getByText("No courses found.")).toBeVisible();
+    await expect(page.locator("article")).toHaveCount(0);
+  });
+
+  test("a normal search still matches by code", async ({ page }) => {
+    await search(page, "EECE350");
+    await expect(card(page, "EECE350")).toHaveCount(1);
+    await expect(card(page, course.code)).toHaveCount(0);
+  });
 });
 
 test("an unknown faculty in a link says it doesn't exist", async ({ page }) => {

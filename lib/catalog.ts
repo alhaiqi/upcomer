@@ -1,6 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { logError } from "@/lib/logger";
+import { escapeLike } from "@/lib/search";
 
 export const COURSES_PER_PAGE = 20;
 
@@ -10,9 +11,9 @@ export async function getCatalogCourses({ query = "", facultyId = "", professorI
   const search = query.trim();
   const where: Prisma.CourseWhereInput = {
     ...(search ? { OR: [
-      { code: { contains: search, mode: "insensitive" } },
-      { code: { contains: search.replace(/\s+/g, ""), mode: "insensitive" } },
-      { name: { contains: search, mode: "insensitive" } },
+      { code: { contains: escapeLike(search), mode: "insensitive" } },
+      { code: { contains: escapeLike(search.replace(/\s+/g, "")), mode: "insensitive" } },
+      { name: { contains: escapeLike(search), mode: "insensitive" } },
     ] } : {}),
     ...(facultyId ? { facultyId } : {}),
     ...(professorId ? { professors: { some: { professorId } } } : {}),
