@@ -47,6 +47,7 @@ The seed is repeatable and includes one record for a deliberately missing physic
 | `/signup` | Create an account; optional `error` and `next` query parameters |
 | `/login` | Log in; optional `error`, `next`, and `registered` query parameters |
 | `/my-courses` | The logged-in student's courses; requires a session |
+| `/profile` | Edit your own name, faculty, and major; requires a session. `/profile/:id` and `/profile/:id/edit` redirect to `/profile` for your own ID and show the not-found page for anyone else's |
 | `/admin/catalog` | Catalog management menu; admins only |
 | `/admin/catalog/faculties`, `/courses`, `/professors`, `/terms` | List and add entries; optional `saved`, `error`, and `value` query parameters |
 | `/admin/catalog/:section/:id` | Edit one faculty, course, professor, or term |
@@ -244,6 +245,29 @@ Tests are in `tests/unit/submissions.test.ts`, `tests/unit/submission-route.test
 - `tests/reliability/features/browsing.ts`
 - their unit tests
 
+## Profile (US-04)
+
+A logged-in user edits their own profile at `/profile`, linked as "Profile" in the header. The email is shown but can't be changed here, since it is the login.
+
+- **Fields** (migration `20261018000000_user_profile`):
+  - `User.name`: required, at most 100 characters, with spaces trimmed and collapsed.
+  - `User.facultyId`: optional, chosen from the `Faculty` list; set to null if the faculty is deleted.
+  - `User.major`: optional, short free text, at most 100 characters.
+
+  An empty faculty or major clears it. The limits and messages are in `lib/profile-rules.ts`, shared with the form.
+- **Whose profile.** Always the session user's (`requireUser("/profile")`). The server action reads only `name`, `facultyId`, and `major`, so an ID added to the form is ignored. `/profile/:id` and `/profile/:id/edit` send your own ID to `/profile`. Anyone else's ID gets the not-found page, the same as other denied pages, without saying whether the account exists, and is logged as `unauthorized_access`. A visitor is sent to log in.
+- **Errors** such as "Enter your name." appear above the form, and the form keeps what was typed. The typed values come back through the action's state (`useActionState`), not the URL, so a name never lands in a link or in browser history. Nothing is saved, so the stored profile keeps its old values.
+
+Refused saves are logged as `profile_save_rejected` (with the reason), and failures as `profile_save_failed` and `profile_retrieval_failed`. Only the user ID, reason, and error type or code are logged, never a name, major, or email.
+
+The service is `lib/profile.ts`, the action is `lib/profile-actions.ts`, the pages are `app/profile/page.tsx` and `app/profile/[...path]/page.tsx`, and the form is `components/profile-form.tsx`. Tests are in `tests/unit/profile.test.ts`, `tests/unit/profile-pages.test.tsx`, and `tests/e2e/profile.spec.ts`, which creates its own students and faculty and deletes them. Shared files changed:
+- `prisma/schema.prisma`
+- `lib/logger.ts`
+- `middleware.ts` (`/profile`)
+- `app/layout.tsx` (Profile link)
+- `app/globals.css` (`.field-value`)
+- `tests/unit/middleware.test.ts`
+
 ## Authentication and My Courses (Member 1)
 
 `/signup`, `/login`, and `/my-courses` cover US-01 (create an account), US-02 (log in and log out), and US-07 (add a course to My Courses). Sessions are rows in the database, not JWTs, so logging out really revokes the session.
@@ -338,6 +362,8 @@ The levels live in one table, `EVENT_LEVELS` in `lib/logger.ts`, and TypeScript 
 | 1 (Sprint 2) | `submission_failed`, `submission_retrieval_failed`, `submission_review_failed` | error | `courseId`, `resourceCategory`, `userId`, `fileId`, `entity`, `operation`, `errorType` |
 | 1 (Sprint 2) | `submission_rejected` | info | `fileId` (never the reason) |
 | 1 (Sprint 2) | `unpublished_file_access` | warn | `fileId`, `role`, `userId` |
+| 1 (Sprint 2) | `profile_save_rejected` | warn | `userId`, `reason` |
+| 1 (Sprint 2) | `profile_save_failed`, `profile_retrieval_failed` | error | `userId`, `entity`, `errorType`, `errorCode` |
 
 ### What is never logged
 

@@ -1,10 +1,11 @@
 # Upcomer Sprint 2 — Member 1 Implementation Report
 
-Mustafa Ergaibi, branch `feature/mustafa-sprint-2`. This report covers US-13. US-04 and US-03 will be added to it on the same branch.
+Mustafa Ergaibi, branch `feature/mustafa-sprint-2`. This report covers US-13 and US-04. US-03 will be added to it on the same branch.
 
 ## Scope
 
 - US-13: Submit a past exam or course material for admin review.
+- US-04: Manage my profile information (see [US-04](#us-04-manage-my-profile)).
 
 Not included: the admin review page is Mohammed Al-Haiqi's US-74, and question extraction is Ali Slim's US-14. The model and functions below are the hand-off point for both.
 
@@ -131,8 +132,71 @@ Storage and record failures keep their `upload_*` events, now with `source=submi
 - **Lea's random-course unit test is timing-sensitive.** `tests/unit/consolidated-exam-edge-cases.test.tsx` (the "random courses" case) sometimes passes the default 5-second timeout under a full parallel `npm test` on this machine. It runs in about 2 seconds alone. It failed the same way on a clean checkout of `main`, so it isn't caused by this change. The last full run passed. A longer timeout on that one test would fix it; that's her call.
 - **The session cookie is `Secure` under `next start`.** Playwright's own request context therefore doesn't send it over `http://127.0.0.1`, while the browser does. Logged-in e2e checks of `/files/:id` fetch from inside the page for that reason.
 
+## US-04: Manage my profile
+
+### Architecture
+
+| Area | Files | Responsibility |
+| --- | --- | --- |
+| Schema | `prisma/schema.prisma`, `prisma/migrations/20261018000000_user_profile` | `User.facultyId` (optional, to `Faculty`, set to null if the faculty is deleted) and `User.major` (optional) |
+| Rules | `lib/profile-rules.ts` | Limits (name and major at most 100 characters), error types, and messages, shared by the server and the form |
+| Service | `lib/profile.ts` | `getProfile`, `getFacultyOptions`, `saveProfile(userId, values)`. The ID always comes from the caller, never from a URL or form |
+| Action | `lib/profile-actions.ts` | `saveProfileAction` calls `requireUser("/profile")` first and reads only `name`, `facultyId`, and `major` |
+| Pages | `app/profile/page.tsx`, `app/profile/[...path]/page.tsx`, `components/profile-form.tsx` | The profile form, and denial of profile URLs that name another user |
+
+### User stories and behavior
+
+| Acceptance test | Behavior |
+| --- | --- |
+| 1. Edited name, faculty, or major persist after logging out and back in | Saved to `User`, with spacing tidied. The page shows "Profile saved." and reads the stored values each time it opens |
+| 2. Invalid input shows the error and keeps the old values | Nothing is saved, so the stored profile is unchanged. The error appears above the form (`role="alert"`, `aria-invalid` on the field), and the form keeps what was typed. The typed values come back through `useActionState`, never through the URL. Empty or spaces-only names, names or majors over 100 characters, and unknown faculties are refused |
+| 3. Another student's profile edit page by URL is denied | `/profile/:id` and `/profile/:id/edit` show the not-found page for any ID but your own, which goes to `/profile`. These are logged as `unauthorized_access`. A form with an added `userId` or `id` still saves the session user |
+
+**Note for the team:** a student's faculty and major are `User.facultyId` and `User.major`. Anything that shows them should read them there, and should never let one student edit another's.
+
+### Monitoring
+
+| Event | Level | Context |
+| --- | --- | --- |
+| `profile_save_rejected` | warn | `userId`, `reason` |
+| `profile_save_failed` | error | `userId`, `errorType`, `errorCode` |
+| `profile_retrieval_failed` | error | `entity`, `userId`, `errorType` |
+
+Names, majors, and emails are never logged; a unit test checks this.
+
+### Shared files changed
+
+- `prisma/schema.prisma` and the migration. The SQL file starts at the SQL, `migration_lock.toml` is unchanged, and `prisma migrate diff` reports no drift.
+- `lib/logger.ts`: the three events.
+- `middleware.ts`: `/profile` and `/profile/:path*` need a session.
+- `app/layout.tsx`: the "Profile" header link.
+- `app/globals.css`: `.field-value`, for the read-only email.
+- `tests/unit/middleware.test.ts`: the matcher.
+- `README.md`: the route, the events, and a "Profile (US-04)" section.
+
+### Tests and checks performed
+
+| Test file | Tests | Covers |
+| --- | --- | --- |
+| `tests/unit/profile.test.ts` | 14 | Saving only the given user, tidied spacing, clearing optional fields, limits, empty and spaces-only names, unknown or deleted faculty, database failure without the typed text in the logs, messages, reads |
+| `tests/unit/profile-pages.test.tsx` | 8 | Login required and saved values shown; the form keeps typed values and marks the field after an error; a save is confirmed; the action ignores a posted ID; denied, own-ID, and visitor URLs |
+| `tests/e2e/profile.spec.ts` | 3 | AT1 across log out and log in; AT2 with browser validation off (empty and 101-character names, typed values kept, stored values unchanged); AT3 (another student's URLs give 404 without their name or email, a visitor is sent to log in, a crafted form saves only the session user). It creates its own two students and faculty and deletes them |
+
+| Command | Result |
+| --- | --- |
+| `npm test` | 607 of 608 passed. The one failure is the pre-existing timeout in Lea's random-course test (see US-13 "Found while testing"). It took 5.4 to 5.9 s against the 5 s limit in three full runs, and passes alone in about 1 s. All US-04 and US-13 tests passed |
+| `npm run lint` | Passed |
+| `npx tsc --noEmit` | Passed |
+| `npm run build` | Passed |
+| `npx prisma migrate deploy`, `npm run db:seed` | Applied `20261018000000_user_profile` to the database in `.env` (Neon), with the user's go-ahead |
+| `npm run test:e2e` | Passed: 54 tests, with no dev server running and no test records left afterwards |
+
+### Found while testing, not changed
+
+- **Sign-up has no maximum name length** (`validateCredentials` in `lib/auth.ts`). An account created with a name over 100 characters can still log in, but its profile can't be saved until the name is shortened. The fix is a matching limit at sign-up, for whoever owns sign-up.
+
 ## Remaining work
 
 - US-74 (Mohammed): the admin review page on top of `listPendingSubmissions`, `publishSubmission`, and `rejectSubmission`.
 - US-14 (Ali Slim): extraction of published exams only.
-- US-04 and US-03 on this branch.
+- US-03 on this branch.
