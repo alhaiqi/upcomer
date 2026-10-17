@@ -41,7 +41,14 @@ type LogEvent =
   | "unpublished_file_access"
   | "profile_save_rejected"
   | "profile_save_failed"
-  | "profile_retrieval_failed";
+  | "profile_retrieval_failed"
+  | "password_reset_requested"
+  | "password_reset_rate_limited"
+  | "password_reset_token_rejected"
+  | "password_reset_rejected"
+  | "password_reset_completed"
+  | "password_reset_failed"
+  | "password_reset_email_failed";
 
 export type { LogEvent };
 export type LogLevel = "error" | "warn" | "info";
@@ -101,6 +108,14 @@ export const EVENT_LEVELS: Record<LogEvent, LogLevel> = {
   profile_save_rejected: "warn",
   profile_save_failed: "error",
   profile_retrieval_failed: "error",
+  // Member 1 (Sprint 2): password reset (US-03)
+  password_reset_requested: "info",
+  password_reset_rate_limited: "warn",
+  password_reset_token_rejected: "warn",
+  password_reset_rejected: "warn",
+  password_reset_completed: "info",
+  password_reset_failed: "error",
+  password_reset_email_failed: "error",
 };
 
 // A refusal event that was caused by the database failing is a real failure, so it is raised to error.
