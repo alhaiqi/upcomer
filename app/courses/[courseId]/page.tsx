@@ -18,5 +18,6 @@ export default async function CoursePage({ params, searchParams }: { params: Pro
     <h2>Course Resources</h2><div className="grid">
     <section className="card"><h2>Previous Exams</h2><p className="muted">Browse exams from earlier terms.</p><Link className="button" href={`/courses/${course.id}/exams`}>Browse Previous Exams</Link></section>
     <section className="card"><h2>Course Materials</h2><p className="muted">Find notes, slides, and readings.</p><Link className="button" href={`/courses/${course.id}/materials`}>Browse Course Materials</Link></section>
+    <section className="card"><h2>Question Bank</h2><p className="muted">Questions from previous exams, the most frequent first.</p><Link className="button" href={`/courses/${course.id}/questions`}>Browse Question Bank</Link></section>
   </div></>;
 }

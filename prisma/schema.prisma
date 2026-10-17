@@ -73,16 +73,17 @@ model UserCourse {
 }
 
 model Course {
-  id          String            @id @default(cuid())
-  code        String            @unique
-  name        String
-  facultyId   String
-  faculty     Faculty           @relation(fields: [facultyId], references: [id])
-  professors  CourseProfessor[]
-  files       CourseFile[]
-  enrollments UserCourse[]
-  createdAt   DateTime          @default(now())
-  updatedAt   DateTime          @updatedAt
+  id             String            @id @default(cuid())
+  code           String            @unique
+  name           String
+  facultyId      String
+  faculty        Faculty           @relation(fields: [facultyId], references: [id])
+  professors     CourseProfessor[]
+  files          CourseFile[]
+  enrollments    UserCourse[]
+  questionGroups QuestionGroup[]
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
 }
 
 model CourseProfessor {
@@ -123,6 +124,7 @@ model CourseFile {
   topic            String?
   mimeType         String?
   sizeBytes        Int?
+  questions        Question[]
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
 
@@ -147,4 +149,43 @@ model LogEntry {
   @@index([createdAt])
   @@index([level, createdAt])
   @@index([event, createdAt])
+}
+
+// One question extracted from an exam paper (written by US-14's extraction). Its course is always the paper's course.
+model Question {
+  id        String         @id @default(cuid())
+  fileId    String
+  file      CourseFile     @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  // Position of the question in its paper, from 1.
+  number    Int
+  text      String
+  groupId   String?
+  group     QuestionGroup? @relation(fields: [groupId], references: [id], onDelete: SetNull)
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+
+  @@unique([fileId, number])
+  @@index([groupId])
+}
+
+// Identical and near-identical questions of one course (US-15a), ranked by how many papers they appeared in (US-16).
+// Rebuilt by rebuildQuestionBank in lib/question-bank.ts; the papers are the files of its questions.
+model QuestionGroup {
+  id             String     @id @default(cuid())
+  courseId       String
+  course         Course     @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  // The question as shown to students: the first source question, without its number or marks.
+  text           String
+  // Grouping key; unique per course, so a rebuild keeps each group's ID.
+  normalizedText String
+  // Distinct papers the question appeared in; a repeat inside one paper counts once.
+  paperCount     Int
+  // 1 is the most frequent question in the course.
+  rank           Int
+  questions      Question[]
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  @@unique([courseId, normalizedText])
+  @@index([courseId, rank])
 }

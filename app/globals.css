@@ -84,6 +84,7 @@ header > .muted { margin: .15rem 0; }
 
 .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1rem; }
 .list { display: grid; gap: .85rem; }
+.question-list { margin: 0; padding: 0; list-style: none; }
 div.list { grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); }
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1.35rem 1.4rem; transition: background-color var(--ease), border-color var(--ease); }
 .card h2, .card h3 { margin: 0 0 .5rem; }

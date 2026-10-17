@@ -9,6 +9,10 @@ type LogEvent =
   | "course_catalog_retrieval_failed"
   | "course_search_failed"
   | "catalog_filter_options_retrieval_failed"
+  | "question_grouping_rejected"
+  | "question_grouping_failed"
+  | "question_bank_retrieval_failed"
+  | "question_search_failed"
   | "signup_failed"
   | "login_failed"
   | "session_validation_failed"
@@ -49,6 +53,11 @@ export const EVENT_LEVELS: Record<LogEvent, LogLevel> = {
   course_catalog_retrieval_failed: "error",
   course_search_failed: "error",
   catalog_filter_options_retrieval_failed: "error",
+  // Member 2: question bank (US-15a, US-16, US-20)
+  question_grouping_rejected: "warn",
+  question_grouping_failed: "error",
+  question_bank_retrieval_failed: "error",
+  question_search_failed: "error",
   // Member 3: course workspace and files
   course_retrieval_failed: "error",
   exam_list_retrieval_failed: "error",

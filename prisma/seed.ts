@@ -1,5 +1,6 @@
 import { PrismaClient, ExamType, FileCategory, Role } from "@prisma/client";
 import bcrypt from "bcryptjs";
+import { rebuildQuestionBank } from "../lib/question-bank";
 
 const db = new PrismaClient();
 
@@ -50,7 +51,33 @@ async function main() {
   for (const file of files) {
     await db.courseFile.upsert({ where: { id: file.id }, update: {}, create: { ...file, originalFileName: file.storageKey, mimeType: "application/pdf" } });
   }
+  await seedQuestions();
   await seedAdmin();
+}
+
+// Sample questions for the two EECE350 exams, so the question bank has data before extraction (US-14) runs on them.
+// "Explain the TCP three-way handshake" and "Define a socket" appear in both papers with different spacing and punctuation.
+async function seedQuestions() {
+  const questions: Record<string, string[]> = {
+    "file-eece350-final": [
+      "Explain the TCP three-way handshake. (10 points)",
+      "What is the difference between TCP and UDP?",
+      "Define a socket.",
+      "Compute the subnet mask of a /26 network.",
+    ],
+    "file-eece350-midterm": [
+      "Q1. explain the TCP three-way  handshake",
+      "Define a socket",
+      "What does ARP do?",
+    ],
+  };
+  for (const [fileId, texts] of Object.entries(questions)) {
+    for (const [index, text] of texts.entries()) {
+      await db.question.upsert({ where: { fileId_number: { fileId, number: index + 1 } }, update: {}, create: { fileId, number: index + 1, text } });
+    }
+  }
+  const result = await rebuildQuestionBank("course-eece350");
+  if (!result.ok) throw new Error(`Grouping the sample questions failed: ${result.error}`);
 }
 
 main().finally(() => db.$disconnect());

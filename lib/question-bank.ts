@@ -1,0 +1,180 @@
+import { ExamType, FileCategory, type Prisma } from "@prisma/client";
+import { db } from "@/lib/db";
+import { logError } from "@/lib/logger";
+import { groupQuestions, normalizeQuestionText, rankGroups } from "@/lib/question-grouping";
+
+const errorType = (error: unknown) => (error instanceof Error ? error.name : "Unknown");
+
+// Only questions from exam papers are grouped; the course is always the paper's current course.
+const courseExams = (courseId: string): Prisma.CourseFileWhereInput => ({ courseId, category: FileCategory.EXAM });
+
+export type RebuildResult = { ok: true; groupCount: number; questionCount: number } | { ok: false; error: "not_found" | "unexpected" };
+
+// Regroups (US-15a) and re-ranks (US-16) every question of a course. Call it after questions are added, changed, or removed,
+// or after a paper moves to another course (for both courses). Groups whose key is unchanged keep their ID.
+export async function rebuildQuestionBank(courseId: string): Promise<RebuildResult> {
+  try {
+    const course = await db.course.findUnique({ where: { id: courseId }, select: { id: true } });
+    if (!course) {
+      logError("question_grouping_rejected", { courseId, reason: "course_not_found" });
+      return { ok: false, error: "not_found" };
+    }
+    return await db.$transaction(async tx => {
+      // One rebuild per course at a time; a second one waits and then sees the first one's result.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${courseId}))`;
+      const questions = await tx.question.findMany({
+        where: { file: courseExams(courseId) },
+        select: { id: true, fileId: true, number: true, text: true, file: { select: { year: true } } },
+      });
+      const ranked = rankGroups(groupQuestions(questions.map(({ file, ...question }) => ({ ...question, year: file.year }))));
+      await tx.questionGroup.deleteMany({ where: { courseId, normalizedText: { notIn: ranked.map(group => group.normalizedText) } } });
+      const grouped = new Set<string>();
+      for (const group of ranked) {
+        const fields = { text: group.text, paperCount: group.paperCount, rank: group.rank };
+        const saved = await tx.questionGroup.upsert({
+          where: { courseId_normalizedText: { courseId, normalizedText: group.normalizedText } },
+          update: fields,
+          create: { courseId, normalizedText: group.normalizedText, ...fields },
+          select: { id: true },
+        });
+        const ids = group.questions.map(question => question.id);
+        ids.forEach(id => grouped.add(id));
+        await tx.question.updateMany({ where: { id: { in: ids } }, data: { groupId: saved.id } });
+      }
+      // Questions with no text left after cleaning (for example only a number) belong to no group.
+      const ungrouped = questions.map(question => question.id).filter(id => !grouped.has(id));
+      if (ungrouped.length) await tx.question.updateMany({ where: { id: { in: ungrouped } }, data: { groupId: null } });
+      return { ok: true as const, groupCount: ranked.length, questionCount: questions.length };
+    }, { timeout: 30_000 });
+  } catch (error) {
+    logError("question_grouping_failed", { courseId, errorType: errorType(error) });
+    return { ok: false, error: "unexpected" };
+  }
+}
+
+export type QuestionBankFilters = { query?: string; year?: string; termId?: string; examType?: string; professorId?: string };
+
+// Unusable values (a year that isn't 4 digits, an unknown type) are dropped, the same as leaving the filter empty.
+export function parseQuestionBankFilters(filters: QuestionBankFilters = {}) {
+  const year = filters.year?.trim() ?? "";
+  const examType = filters.examType?.trim().toUpperCase() ?? "";
+  return {
+    query: filters.query?.trim() ?? "",
+    year: /^\d{4}$/.test(year) ? Number(year) : undefined,
+    termId: filters.termId?.trim() || undefined,
+    examType: (Object.values(ExamType) as string[]).includes(examType) ? (examType as ExamType) : undefined,
+    professorId: filters.professorId?.trim() || undefined,
+  };
+}
+
+const groupInclude = {
+  course: { select: { id: true, code: true, name: true } },
+  questions: {
+    select: {
+      id: true, number: true, text: true, fileId: true,
+      file: { select: { id: true, title: true, year: true, examType: true, term: { select: { id: true, name: true } }, professor: { select: { id: true, name: true } } } },
+    },
+    orderBy: [{ fileId: "asc" }, { number: "asc" }],
+  },
+} satisfies Prisma.QuestionGroupInclude;
+
+type GroupRow = Prisma.QuestionGroupGetPayload<{ include: typeof groupInclude }>;
+type Paper = GroupRow["questions"][number]["file"];
+
+// One entry per paper, newest first; a question repeated inside one paper lists that paper once.
+function papersOf(group: GroupRow): Paper[] {
+  const papers = new Map<string, Paper>();
+  for (const question of group.questions) papers.set(question.file.id, question.file);
+  return [...papers.values()].sort((a, b) => (b.year ?? 0) - (a.year ?? 0) || a.title.localeCompare(b.title) || (a.id < b.id ? -1 : 1));
+}
+
+export type QuestionBankGroup = {
+  id: string;
+  rank: number;
+  text: string;
+  paperCount: number;
+  course: GroupRow["course"];
+  questions: Array<{ id: string; number: number; text: string; fileId: string }>;
+  papers: Paper[];
+};
+export type QuestionBank = { totalPapers: number; groups: QuestionBankGroup[] };
+
+// The ranked question bank of a course, most frequent first (rank 1). Shared with Member 3's evidence, consolidated exam,
+// and likelihood tiers: each group has its text, course, rank, paper count, every source question, and the papers.
+// totalPapers is the number of the course's exam papers with at least one extracted question ("X of Y papers").
+// The keyword and the paper filters (US-20) combine, and the ranking order is kept.
+export async function getQuestionBank(courseId: string, filters: QuestionBankFilters = {}): Promise<QuestionBank> {
+  const { query, ...paper } = parseQuestionBankFilters(filters);
+  const paperFilter: Prisma.CourseFileWhereInput = Object.fromEntries(Object.entries(paper).filter(([, value]) => value !== undefined));
+  const filtered = Boolean(query) || Object.keys(paperFilter).length > 0;
+  try {
+    const [totalPapers, rows] = await Promise.all([
+      db.courseFile.count({ where: { ...courseExams(courseId), questions: { some: {} } } }),
+      db.questionGroup.findMany({
+        // A group left with no questions (its papers were deleted) is skipped until the next rebuild.
+        // One paper has to match every filter, so "2024" and "Final" means a 2024 final, not a 2024 midterm plus a final.
+        where: { courseId, questions: { some: Object.keys(paperFilter).length ? { file: paperFilter } : {} } },
+        include: groupInclude,
+        orderBy: { rank: "asc" },
+      }),
+    ]);
+    // The keyword is matched the way questions are grouped, so case, spacing, and punctuation do not matter.
+    const keyword = normalizeQuestionText(query);
+    const matches = (group: GroupRow) => !keyword || group.normalizedText.includes(keyword)
+      || group.questions.some(question => normalizeQuestionText(question.text).includes(keyword));
+    const groups = rows.filter(matches).map((group): QuestionBankGroup => ({
+      id: group.id, rank: group.rank, text: group.text, paperCount: group.paperCount, course: group.course,
+      questions: group.questions.map(({ id, number, text, fileId }) => ({ id, number, text, fileId })),
+      papers: papersOf(group),
+    }));
+    return { totalPapers, groups };
+  } catch (error) {
+    logError(filtered ? "question_search_failed" : "question_bank_retrieval_failed", {
+      courseId, year: paper.year === undefined ? undefined : String(paper.year), termId: paper.termId, examType: paper.examType,
+      professorId: paper.professorId, errorType: errorType(error),
+    });
+    throw error;
+  }
+}
+
+// The years, terms, types, and professors of the course's papers that have questions, for the US-20 dropdowns.
+export async function getQuestionBankFilterOptions(courseId: string) {
+  try {
+    const papers = await db.courseFile.findMany({
+      where: { ...courseExams(courseId), questions: { some: {} } },
+      select: { year: true, examType: true, term: { select: { id: true, name: true } }, professor: { select: { id: true, name: true } } },
+    });
+    const unique = <T extends { id: string; name: string }>(items: Array<T | null>) =>
+      [...new Map(items.filter((item): item is T => item !== null).map(item => [item.id, item])).values()].sort((a, b) => a.name.localeCompare(b.name));
+    return {
+      years: [...new Set(papers.map(paper => paper.year).filter((year): year is number => year !== null))].sort((a, b) => b - a),
+      examTypes: Object.values(ExamType).filter(type => papers.some(paper => paper.examType === type)),
+      terms: unique(papers.map(paper => paper.term)),
+      professors: unique(papers.map(paper => paper.professor)),
+    };
+  } catch (error) {
+    logError("question_bank_retrieval_failed", { courseId, errorType: errorType(error) });
+    throw error;
+  }
+}
+
+// Admin overview: every course with extracted questions, how many, and how many groups they form.
+export async function getQuestionBankOverview() {
+  try {
+    const [papers, courses] = await Promise.all([
+      db.courseFile.findMany({ where: { category: FileCategory.EXAM, questions: { some: {} } }, select: { courseId: true, _count: { select: { questions: true } } } }),
+      db.course.findMany({ select: { id: true, code: true, name: true, _count: { select: { questionGroups: true } } }, orderBy: { code: "asc" } }),
+    ]);
+    const questionCounts = new Map<string, { papers: number; questions: number }>();
+    for (const paper of papers) {
+      const counts = questionCounts.get(paper.courseId) ?? { papers: 0, questions: 0 };
+      questionCounts.set(paper.courseId, { papers: counts.papers + 1, questions: counts.questions + paper._count.questions });
+    }
+    return courses
+      .filter(course => questionCounts.has(course.id) || course._count.questionGroups > 0)
+      .map(({ _count, ...course }) => ({ ...course, groupCount: _count.questionGroups, ...(questionCounts.get(course.id) ?? { papers: 0, questions: 0 }) }));
+  } catch (error) {
+    logError("question_bank_retrieval_failed", { errorType: errorType(error) });
+    throw error;
+  }
+}
