@@ -49,7 +49,10 @@ type LogEvent =
   | "password_reset_completed"
   | "password_reset_failed"
   | "password_reset_email_failed"
-  | "slow_operation";
+  | "slow_operation"
+  | "submission_reviewed"
+  | "submission_review_refused"
+  | "submission_review_rate_limited";
 
 export type { LogEvent };
 export type LogLevel = "error" | "warn" | "info";
@@ -119,6 +122,10 @@ export const EVENT_LEVELS: Record<LogEvent, LogLevel> = {
   password_reset_email_failed: "error",
   // An operation slower than the 1 s target (lib/timing.ts)
   slow_operation: "warn",
+  // US-74: admin review of submissions (who reviewed is in userId; the reason is never logged)
+  submission_reviewed: "info",
+  submission_review_refused: "warn",
+  submission_review_rate_limited: "warn",
 };
 
 // A refusal event that was caused by the database failing is a real failure, so it is raised to error.

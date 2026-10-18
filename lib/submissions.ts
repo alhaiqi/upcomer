@@ -67,12 +67,14 @@ export async function getMySubmissions(userId: string) {
 export type MySubmission = Awaited<ReturnType<typeof getMySubmissions>>[number];
 
 // The review queue (US-74): every pending submission, oldest first, with its submitter.
-export async function listPendingSubmissions() {
+// An optional range returns one page of it; the review page shows 20 at a time (lib/submission-review.ts).
+export async function listPendingSubmissions(range?: { skip: number; take: number }) {
   try {
     return await db.courseFile.findMany({
       where: { status: FileStatus.PENDING },
       include: { ...reviewInclude, submittedBy: { select: { id: true, name: true } } },
       orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      ...range,
     });
   } catch (error) {
     logError("submission_retrieval_failed", { entity: "pending_submissions", errorType: errorType(error) });
@@ -81,6 +83,16 @@ export async function listPendingSubmissions() {
 }
 
 export type PendingSubmission = Awaited<ReturnType<typeof listPendingSubmissions>>[number];
+
+// How many submissions are waiting for review.
+export async function countPendingSubmissions() {
+  try {
+    return await db.courseFile.count({ where: { status: FileStatus.PENDING } });
+  } catch (error) {
+    logError("submission_retrieval_failed", { entity: "pending_count", errorType: errorType(error) });
+    throw error;
+  }
+}
 export type ReviewError = "not_found" | "not_pending" | "reason_required" | "reason_too_long";
 export type ReviewResult = { ok: true; id: string; courseId: string } | { ok: false; error: ReviewError };
 
