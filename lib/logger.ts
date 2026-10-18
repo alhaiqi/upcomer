@@ -48,7 +48,8 @@ type LogEvent =
   | "password_reset_rejected"
   | "password_reset_completed"
   | "password_reset_failed"
-  | "password_reset_email_failed";
+  | "password_reset_email_failed"
+  | "slow_operation";
 
 export type { LogEvent };
 export type LogLevel = "error" | "warn" | "info";
@@ -116,6 +117,8 @@ export const EVENT_LEVELS: Record<LogEvent, LogLevel> = {
   password_reset_completed: "info",
   password_reset_failed: "error",
   password_reset_email_failed: "error",
+  // An operation slower than the 1 s target (lib/timing.ts)
+  slow_operation: "warn",
 };
 
 // A refusal event that was caused by the database failing is a real failure, so it is raised to error.
