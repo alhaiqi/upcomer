@@ -270,6 +270,12 @@ The page is `app/admin/submissions/page.tsx`, the actions (`requireAdmin()` firs
 - `app/globals.css` (`.field textarea`)
 - `vitest.config.ts`, `package.json`, `.github/workflows/ci.yml`
 
+## Exam pipeline integration tests (US-92)
+
+`tests/integration/exam-pipeline.test.ts` runs the exam pipeline end to end against a real database: five sample exam PDFs (built in `tests/integration/fixtures/sample-exams.ts`) are uploaded through `POST /api/admin/uploads`, their questions extracted, grouped and ranked by `rebuildQuestionBank`, and the result checked against the expected consolidated ordered exam (`getConsolidatedExam`), question by question, with counts, tiers, and papers. Other tests cover upload order, concurrent uploads, pending and rejected submissions, materials, deleted and re-tagged papers, non-admin uploads, and a 20-paper course within 1 s per stage. They run in CI with `npm run test:integration`.
+
+Extraction (US-14) is not on main yet: `tests/integration/fixtures/pipeline.ts` is the one place to plug the real extractor in. Failed processing runs (US-76) are todo tests. Load tests: `npm run load -- ordered-exam` and `npm run load -- exam-upload`. Details, findings, and results: `PIPELINE_INTEGRATION_REPORT.md`. No product code is changed.
+
 ## Profile (US-04)
 
 A logged-in user edits their own profile at `/profile`, linked as "Profile" in the header. The email is shown but can't be changed here, since it is the login.
