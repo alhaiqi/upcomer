@@ -117,12 +117,12 @@ p.card.muted { margin-bottom: 0; padding: 2.25rem 1.5rem; border-style: dashed; 
 .search input { flex: 1 1 100%; }
 .search select { flex: 1 1 12rem; min-width: 0; }
 .search .button { margin-top: 0; }
-.search input, .search select, .form input, .form select, .field input, .field select {
+.search input, .search select, .form input, .form select, .field input, .field select, .field textarea {
   width: 100%; min-height: 2.75rem; border: 1px solid var(--input-border); border-radius: var(--radius-small); background: var(--surface); color: var(--text);
   padding: .6rem .85rem; font: inherit; font-weight: 400; transition: border-color var(--ease), box-shadow var(--ease);
 }
 .search input::placeholder, .form input::placeholder, .field input::placeholder { color: var(--muted); opacity: 1; }
-.search input:focus-visible, .search select:focus-visible, .form input:focus-visible, .form select:focus-visible, .field input:focus-visible, .field select:focus-visible {
+.search input:focus-visible, .search select:focus-visible, .form input:focus-visible, .form select:focus-visible, .field input:focus-visible, .field select:focus-visible, .field textarea:focus-visible {
   outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 30%, transparent);
 }
 .form input[type="file"] { padding: .5rem; }

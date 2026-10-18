@@ -21,7 +21,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
     <div className="header-actions">
       <nav className="site-nav" aria-label="Account">
         {user
-          ? <>{user.role === "ADMIN" && <><Link href="/admin/catalog">Admin</Link><Link href="/admin/monitoring">Monitoring</Link></>}<Link href="/profile">Profile</Link><Link href="/my-courses">My Courses</Link><form action={logOutAction}><button type="submit">Log out</button></form></>
+          ? <>{user.role === "ADMIN" && <><Link href="/admin/catalog">Admin</Link><Link href="/admin/submissions">Review</Link><Link href="/admin/monitoring">Monitoring</Link></>}<Link href="/profile">Profile</Link><Link href="/my-courses">My Courses</Link><form action={logOutAction}><button type="submit">Log out</button></form></>
           : <><Link href="/login">Log in</Link><Link href="/signup">Sign up</Link></>}
       </nav>
       <ThemeToggle />
