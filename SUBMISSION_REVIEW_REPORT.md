@@ -46,10 +46,11 @@ The earlier branch (`feature/submission-review`, never pushed) guessed the US-13
 
 | Kind | File | Tests | What it checks |
 | --- | --- | ---: | --- |
-| Unit | `tests/unit/submission-review.test.ts` | 13 | Pages and page fallback; no row query for an empty queue; publish regroups an exam; the reason is trimmed and never logged; each refusal is logged with its reason; slow reviews are logged; the rate limit refuses an admin without touching the database and does not affect another admin; actions check the admin first and return to the same page; unknown messages are not echoed |
+| Unit | `tests/unit/submission-review.test.ts` | 18 | Hostile inputs: a file or a 100,000-character string as the ID, a reason at exactly 500 characters, emoji and line breaks, and reasons made only of spaces or invisible characters; refused reviews count toward the rate limit. Also: pages and page fallback; no row query for an empty queue; publish regroups an exam; the reason is trimmed and never logged; each refusal is logged with its reason; slow reviews are logged; the rate limit refuses an admin without touching the database and does not affect another admin; actions check the admin first and return to the same page; unknown messages are not echoed |
 | Unit | `tests/unit/submission-review-pages.test.tsx` | 6 | Admin check before reading; order, details, and forms; page links and the page kept in the forms; empty queue; notices; student titles and names are escaped |
 | Unit | `tests/unit/timing.test.ts`, `tests/unit/rate-limit.test.ts` | 5 | Timing and slow logging, including a failed operation; the limit window and the environment value |
 | Integration (real database) | `tests/integration/submission-review.test.ts` | 12 | Oldest first with ID ties; pages keep the order; **two admins publishing at once: exactly one wins**; publish against reject: the first decision stays; each category on its page; **a published exam enters the question bank, a pending or rejected one does not**; each student sees only their own; no second review; blank, too long, and unknown refused without changes; deleted student account; **a 60-question exam published into a course with 20 papers, regrouping included, in under 1 s** |
+| Integration (real database) | `tests/integration/submission-review-stress.test.ts` | 7 | **4 admins making 120 random reviews of 24 submissions, 20 at a time, with three fixed random seeds**: every submission is decided at most once, the stored state is always the winner's, every loser is told "already reviewed", the queue shows exactly the undecided files, and the question bank left behind equals a fresh rebuild. Also: 12 exams sharing a question published at the same moment (one group, 12 papers); the rate limit on a real database; a submission moved to another course while waiting; a submission or its course deleted between opening the queue and reviewing |
 | e2e (Playwright) | `tests/e2e/admin-submission-review.spec.ts` | 6 | A submission made through `/submit` reaches the queue in order; publish through the page puts the exam on the course page and its question in the question bank; a reason is required and the student sees it, while the file stays hidden from others; an HTML-looking reason is plain text with no dialog; **two admins in two browsers: the second is told it was already reviewed and the publish stays**; visitors are sent to log in, and students get no queue and no Review link |
 
 **The tests catch real bugs.** Each change below was made on purpose, and the tests named failed:
@@ -59,7 +60,31 @@ The earlier branch (`feature/submission-review`, never pushed) guessed the US-13
 | Removing the `status: PENDING` check from the update | The two race tests and "no second review" |
 | Not regrouping on publish | The question pipeline test and the 60-question test |
 | Dropping the ID tie-break | The order test |
+| Removing the `status: PENDING` check (stress test) | All three random concurrent runs |
+| Checking the reason with `trim()` only | The invisible-characters test |
 | Always showing the first page | The pages test |
+
+## Real run: production server, real database, real browser
+
+A script (not in the repo) ran the whole feature the way people would use it: a production build (`next start`), a fresh PostgreSQL database, Chromium, real PDFs, and `REVIEW_RATE_LIMIT_PER_MINUTE=5`. **30 of 30 checks passed**:
+
+- Two students signed up through `/signup`, and one submitted four real PDFs through `/submit`.
+- While pending, the files were on no course page and gave 404 to a visitor and to the other student.
+- The admin's queue listed them oldest first (loaded in 98 ms), and "Open file" returned the same PDF byte for byte.
+- **Forged requests.** The real publish action ID was taken from the admin's page and posted by a student and by a visitor. Nothing changed: the student got 404, and the visitor was sent to log in.
+- A reason of zero-width spaces was refused; a real reason was saved and shown to the student, and to no one else.
+- The published exam and notes appeared on their pages and opened for another student; the rejected file stayed 404.
+- **Live rate limit.** A second admin's 6th review within a minute got "Too many reviews in a minute." The first admin was not affected.
+- **Logs.** The server log had timings for the queue, publish, and reject: 63 timed operations, the slowest 98 ms. Audit rows were saved with the admin's ID, the rate limit as a warning, and `/admin/monitoring` showed them. The rejection reason, the titles, and the students' emails appeared in neither the server log nor the log table.
+- **Database rules held for every file:** a rejected file has a reason and a review time, a pending one has neither, and a published submission has a review time and no reason.
+
+## Found by the testing
+
+| Finding | What was done |
+| --- | --- |
+| A rejection reason made only of invisible characters (zero-width spaces, word joiners, blank fillers) passed the "reason required" check, because `trim()` keeps them. The student would have seen an empty "Reason:" | Fixed in `lib/submission-review.ts`: these are removed before checking that something readable is left. Any language works. The same check could move into `rejectSubmission` in `lib/submissions.ts` (US-13) |
+| A rate-limited admin also counts refused attempts, so a script sending bad requests is stopped as well | Kept on purpose, and tested |
+| Publishing an exam whose questions have not been extracted adds nothing to the question bank | Expected until US-14 (extraction) exists |
 
 ## Professor's checklist
 
@@ -101,7 +126,7 @@ npm run load -- review-queue
 | Command | Result |
 | --- | --- |
 | `npm run lint`, `npx tsc --noEmit` | Passed |
-| `npm test` | 677 passed |
+| `npm test` | 682 passed |
 | `npm run build` | Passed |
-| `npm run test:integration` | 12 passed |
+| `npm run test:integration` | 19 passed, three runs in a row |
 | `npm run test:e2e` | 64 passed. In one earlier full run, `admin-file-metadata.spec.ts` (Member 4's) failed once and then passed alone and in the next full run; it shares nothing with this story |
