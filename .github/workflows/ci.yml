@@ -69,6 +69,8 @@ jobs:
       - run: npm ci
       - run: npx prisma migrate deploy
       - run: npm run db:seed
+      # Integration tests (US-74, US-92) against this run's database.
+      - run: npm run test:integration
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
       - name: Upload the Playwright report

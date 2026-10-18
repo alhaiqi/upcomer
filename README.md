@@ -25,6 +25,8 @@ The seed is repeatable and includes one record for a deliberately missing physic
 | `npm run lint` | ESLint |
 | `npm test` | Unit and component tests |
 | `npm run test:e2e` | Playwright flow; requires migrated and seeded database |
+| `npm run test:integration` | Integration tests against a real database (`tests/integration/`); requires a migrated database. They create and delete their own rows |
+| `npm run load -- <scenario>` | Load test with autocannon against a production build, for example `npm run load -- review-queue`; writes `reports/load-<scenario>-<date>.md` and `.json`. `LOAD_SECONDS`, `LOAD_STAGES` (for example `1,10,50`), and `LOAD_SKIP_BUILD=1` change a run. Stop any dev server first |
 | `npm run reliability` | Randomized reliability trials against a production build; writes `reports/reliability-<date>.md` and `.json`. `RELIABILITY_RUNS` (default 50 per feature) and `RELIABILITY_SEED` repeat a run. Stop any dev server first |
 | `npm run db:migrate` | Apply/create Prisma migrations |
 | `npm run db:seed` | Seed local data |
@@ -55,6 +57,7 @@ The seed is repeatable and includes one record for a deliberately missing physic
 | `/admin/catalog/:section/:id` | Edit one faculty, course, professor, or term |
 | `/admin/files` | Every uploaded file with its metadata; optional `courseId`, `saved`, and `error` query parameters |
 | `/admin/files/:id` | Edit one file's course, professor, year, term, type, and topic; optional `error` query parameter |
+| `/admin/submissions` | The review queue: pending submissions, oldest first, 20 per page, each with Publish and a Reject form that needs a reason; optional `page`, `published`, `rejected`, and `error` query parameters; admins only |
 | `/admin/questions` | Extracted question counts per course and a "Regroup and rank" button; optional `rebuilt`, `groups`, and `error` query parameters; admins only |
 | `/admin/monitoring` | Logged errors and warnings, the 24-hour summary, and the alert status; optional `level`, `event`, and `range` query parameters; admins only |
 | `/submit` | Submit a past exam or course material for review; optional `error`, `courseId`, and `category` query parameters; requires a session |
@@ -133,7 +136,7 @@ Two jobs run in parallel. Both must be green before merging.
 | Job | Steps |
 | --- | --- |
 | `checks` | Node 22 with the npm cache, `npm ci`, `npx prisma generate`, `npm run lint`, `npx tsc --noEmit`, `npm test`, `npm run build` |
-| `e2e` | A `postgres:16` service container as a throwaway database, then `npm ci`, `npx prisma migrate deploy`, `npm run db:seed`, `npx playwright install --with-deps chromium`, and `npm run test:e2e` with `CI=true`. On failure, the Playwright report is uploaded as an artifact. |
+| `e2e` | A `postgres:16` service container as a throwaway database, then `npm ci`, `npx prisma migrate deploy`, `npm run db:seed`, `npm run test:integration`, `npx playwright install --with-deps chromium`, and `npm run test:e2e` with `CI=true`. On failure, the Playwright report is uploaded as an artifact. |
 
 No secrets are needed:
 - **Database.** The e2e database exists only for the run and is thrown away afterwards. The team's hosted database is never used.
@@ -159,7 +162,7 @@ For `e2e`:
 1. Point `DATABASE_URL` at an empty, throwaway PostgreSQL database, **never the shared one**.
 2. Set `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `FILE_STORAGE_ROOT=public/uploads`, and `CI=true`.
 3. Stop any `npm run dev`, since port 3000 must be free.
-4. Run `npx prisma migrate deploy && npm run db:seed && npm run test:e2e`.
+4. Run `npx prisma migrate deploy && npm run db:seed && npm run test:integration && npm run test:e2e`.
 
 ### Making CI required
 
@@ -246,6 +249,26 @@ Tests are in `tests/unit/submissions.test.ts`, `tests/unit/submission-route.test
 - `app/globals.css` (`.status-tag`)
 - `tests/reliability/features/browsing.ts`
 - their unit tests
+
+## Submission review (US-74)
+
+Admins review student submissions (US-13) at `/admin/submissions`, linked as "Review" in the header and from the catalog page.
+
+- **Queue.** Every `PENDING` submission, oldest first (ties broken by ID), 20 per page, with its course, type, details, submitter, and links to open the file and edit its details. An invalid or out-of-range `page` falls back to the first or last page.
+- **Publish** makes the file `PUBLISHED`: it appears on its course page, and for an exam `rebuildQuestionBank` groups and ranks its questions with the course's others, so it enters the question pipeline.
+- **Reject** needs a reason (1 to 500 characters, trimmed). The student sees it on `/my-submissions`, as plain text. The reason is never logged or put in a URL.
+- **Races.** Both are a single conditional update in `lib/submissions.ts`, so a second admin acting on the same file gets "That submission was already reviewed." and the first decision stays.
+- **Rate limit.** At most `REVIEW_RATE_LIMIT_PER_MINUTE` reviews (default 60) per admin per minute; more get "Too many reviews in a minute." without touching the database. The count is kept in memory per server process (`lib/rate-limit.ts`).
+- **Response times.** The queue (`review_queue`), publish (`submission_publish`), and reject (`submission_reject`) each print one `operation_timed` JSON line with `durationMs` to the server log (`lib/timing.ts`). One slower than 1 s is also logged as `slow_operation` and shows on `/admin/monitoring`.
+- **Audit.** Each review is logged as `submission_reviewed` with the file, course, operation, and the admin's ID in `userId`.
+
+The page is `app/admin/submissions/page.tsx`, the actions (`requireAdmin()` first) are `lib/submission-review-actions.ts`, and the queue pages, rate limit, timing, and audit event are `lib/submission-review.ts`, on top of the review functions in `lib/submissions.ts`. Tests are in `tests/unit/submission-review.test.ts`, `tests/unit/submission-review-pages.test.tsx`, `tests/integration/submission-review.test.ts`, and `tests/e2e/admin-submission-review.spec.ts`; the load test is `npm run load -- review-queue`. Details and results: `SUBMISSION_REVIEW_REPORT.md`. Shared files changed:
+- `lib/submissions.ts` (optional page range for `listPendingSubmissions`, and `countPendingSubmissions`)
+- `lib/logger.ts`
+- `app/layout.tsx` (Review link)
+- `app/admin/catalog/page.tsx` (Submissions card)
+- `app/globals.css` (`.field textarea`)
+- `vitest.config.ts`, `package.json`, `.github/workflows/ci.yml`
 
 ## Profile (US-04)
 
@@ -396,6 +419,9 @@ The levels live in one table, `EVENT_LEVELS` in `lib/logger.ts`, and TypeScript 
 | 1 (Sprint 2) | `password_reset_requested`, `password_reset_completed` | info | `outcome` (`sent` or `unknown_email`), `userId`, `resetLinkId`, `sessionsEnded` |
 | 1 (Sprint 2) | `password_reset_rate_limited`, `password_reset_token_rejected`, `password_reset_rejected` | warn | `userId`, `reason` (`used`, `expired`, `superseded`, `unknown`, `weak_password`, `password_mismatch`), `resetLinkId` |
 | 1 (Sprint 2) | `password_reset_failed`, `password_reset_email_failed` | error | `stage`, `userId`, `reason`, `errorType`, `errorCode` |
+| US-74 | `submission_reviewed` | info | `fileId`, `courseId`, `operation`, `userId` (the admin) |
+| US-74 | `submission_review_refused`, `submission_review_rate_limited` | warn | `fileId`, `operation`, `reason`, `userId`, `retryAfterSeconds` |
+| US-74 | `slow_operation` | warn | `operation`, `durationMs`, and the operation's IDs |
 
 ### What is never logged
 
