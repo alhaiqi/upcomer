@@ -148,3 +148,47 @@ describe("review messages", () => {
     expect(reviewMessage("toString")).toBe("Something went wrong. Please try again.");
   });
 });
+
+describe("edge and hostile inputs", () => {
+  it("treat a missing, file-valued, or huge ID as an unknown submission", async () => {
+    courseFile.updateMany.mockResolvedValue({ count: 0 });
+    courseFile.findUnique.mockResolvedValue(null);
+    const data = form({ reason: "x" });
+    data.set("id", new File(["%PDF"], "id.pdf"));
+    expect(await redirectedTo(rejectSubmissionAction(data))).toBe("/admin/submissions?error=not_found");
+    expect(await redirectedTo(publishSubmissionAction(form({})))).toBe("/admin/submissions?error=not_found");
+    expect(await redirectedTo(publishSubmissionAction(form({ id: "x".repeat(100_000) })))).toBe("/admin/submissions?error=not_found");
+    // A huge ID is cut down in the log, never written whole.
+    expect(logged().every(line => String(line.fileId ?? "").length <= 201)).toBe(true);
+  });
+  it("count the reason after trimming, at exactly 500 characters, including emoji and line breaks", async () => {
+    expect(await reviewSubmission("admin-1", "reject", "file-a", `  ${"r".repeat(500)}  `)).toEqual({ ok: true });
+    expect(await reviewSubmission("admin-1", "reject", "file-a", "r".repeat(501))).toEqual({ ok: false, error: "reason_too_long" });
+    // An emoji is two UTF-16 units, the same count the browser's maxLength uses.
+    expect(await reviewSubmission("admin-1", "reject", "file-a", "📄".repeat(250))).toEqual({ ok: true });
+    expect(await reviewSubmission("admin-1", "reject", "file-a", "📄".repeat(251))).toEqual({ ok: false, error: "reason_too_long" });
+    await reviewSubmission("admin-1", "reject", "file-a", "Page 2 is missing.\nPlease resubmit.");
+    expect(courseFile.updateMany.mock.calls.at(-1)?.[0].data.rejectionReason).toBe("Page 2 is missing.\nPlease resubmit.");
+  });
+  it("refuse a reason made only of spaces, line breaks, or invisible characters the student could not read", async () => {
+    const blanks = [" ", "\t\n\r", ...[[0xa0, 0xa0], [0x2003], [0x200b, 0x200b], [0x200d], [0x2060], [0x3164], [0x2800], [0xfeff]].map(codes => String.fromCodePoint(...codes))];
+    for (const blank of blanks) {
+      expect(await reviewSubmission("admin-1", "reject", "file-a", blank)).toEqual({ ok: false, error: "reason_required" });
+    }
+    expect(courseFile.updateMany).not.toHaveBeenCalled();
+    // Any readable text is enough, in any script.
+    const scripts = [[0x3f], [0x663], [0x62e, 0x637, 0x623], [0x9519, 0x8bef], [0x2717]].map(codes => String.fromCodePoint(...codes));
+    for (const reason of scripts) expect(await reviewSubmission("admin-1", "reject", "file-a", reason)).toEqual({ ok: true });
+  });
+  it("count refused reviews toward the rate limit, so a flood of bad requests is stopped too", async () => {
+    vi.stubEnv("REVIEW_RATE_LIMIT_PER_MINUTE", "3");
+    for (let index = 0; index < 3; index++) await reviewSubmission("admin-1", "reject", "file-a", "");
+    expect(await reviewSubmission("admin-1", "reject", "file-a", "")).toEqual({ ok: false, error: "rate_limited" });
+  });
+  it("show page 1 for a page value that is not a whole number", async () => {
+    courseFile.count.mockResolvedValue(45);
+    expect(await redirectedTo(publishSubmissionAction(form({ id: "file-a", page: "2.5" })))).toBe("/admin/submissions?published=1");
+    expect(await redirectedTo(publishSubmissionAction(form({ id: "file-a", page: "-4" })))).toBe("/admin/submissions?published=1");
+    expect(await redirectedTo(publishSubmissionAction(form({ id: "file-a", page: "2&admin=1" })))).toBe("/admin/submissions?published=1");
+  });
+});
