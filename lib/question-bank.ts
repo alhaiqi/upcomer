@@ -7,7 +7,7 @@ import { groupCorrectedQuestions, normalizeQuestionText, rankGroups } from "@/li
 const errorType = (error: unknown) => (error instanceof Error ? error.name : "Unknown");
 
 // Only questions from published exam papers are grouped (US-13); the course is always the paper's current course.
-const courseExams = (courseId: string): Prisma.CourseFileWhereInput => ({ courseId, category: FileCategory.EXAM, ...PUBLISHED_FILES });
+export const courseExams = (courseId: string): Prisma.CourseFileWhereInput => ({ courseId, category: FileCategory.EXAM, ...PUBLISHED_FILES });
 
 export type RebuildResult = { ok: true; groupCount: number; questionCount: number } | { ok: false; error: "not_found" | "unexpected" };
 
