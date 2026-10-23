@@ -25,25 +25,40 @@ export async function rebuildQuestionBank(courseId: string): Promise<RebuildResu
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${courseId}))`;
       const questions = await tx.question.findMany({
         where: { file: courseExams(courseId) },
-        select: { id: true, fileId: true, number: true, text: true, file: { select: { year: true } } },
+        select: { id: true, fileId: true, number: true, text: true, groupId: true, file: { select: { year: true } } },
       });
-      const ranked = rankGroups(groupQuestions(questions.map(({ file, ...question }) => ({ ...question, year: file.year }))));
+      const ranked = rankGroups(groupQuestions(questions.map(({ id, fileId, number, text, file }) => ({ id, fileId, number, text, year: file.year }))));
       await tx.questionGroup.deleteMany({ where: { courseId, normalizedText: { notIn: ranked.map(group => group.normalizedText) } } });
-      const grouped = new Set<string>();
-      for (const group of ranked) {
-        const fields = { text: group.text, paperCount: group.paperCount, rank: group.rank };
-        const saved = await tx.questionGroup.upsert({
-          where: { courseId_normalizedText: { courseId, normalizedText: group.normalizedText } },
-          update: fields,
-          create: { courseId, normalizedText: group.normalizedText, ...fields },
-          select: { id: true },
+      // Written in a few batched statements rather than one per group, so a large paper regroups quickly (US-14 cross-test).
+      const existing = new Map((await tx.questionGroup.findMany({
+        where: { courseId }, select: { id: true, normalizedText: true, text: true, paperCount: true, rank: true },
+      })).map(group => [group.normalizedText, group]));
+      const added = ranked.filter(group => !existing.has(group.normalizedText));
+      const groupIds = new Map([...existing].map(([key, group]) => [key, group.id]));
+      if (added.length) {
+        const created = await tx.questionGroup.createManyAndReturn({
+          data: added.map(group => ({ courseId, normalizedText: group.normalizedText, text: group.text, paperCount: group.paperCount, rank: group.rank })),
+          select: { id: true, normalizedText: true },
         });
-        const ids = group.questions.map(question => question.id);
-        ids.forEach(id => grouped.add(id));
-        await tx.question.updateMany({ where: { id: { in: ids } }, data: { groupId: saved.id } });
+        created.forEach(group => groupIds.set(group.normalizedText, group.id));
+      }
+      for (const group of ranked) {
+        const old = existing.get(group.normalizedText);
+        if (old && (old.text !== group.text || old.paperCount !== group.paperCount || old.rank !== group.rank)) {
+          await tx.questionGroup.update({ where: { id: old.id }, data: { text: group.text, paperCount: group.paperCount, rank: group.rank } });
+        }
       }
       // Questions with no text left after cleaning (for example only a number) belong to no group.
-      const ungrouped = questions.map(question => question.id).filter(id => !grouped.has(id));
+      const target = new Map<string, string | null>(questions.map(question => [question.id, null]));
+      for (const group of ranked) for (const question of group.questions) target.set(question.id, groupIds.get(group.normalizedText)!);
+      const moved = questions.filter(question => question.groupId !== target.get(question.id));
+      const regrouped = moved.filter(question => target.get(question.id) !== null);
+      if (regrouped.length) {
+        const ids = regrouped.map(question => question.id);
+        const newGroupIds = regrouped.map(question => target.get(question.id)!);
+        await tx.$executeRaw`UPDATE "Question" SET "groupId" = v.group_id, "updatedAt" = NOW() FROM unnest(${ids}::text[], ${newGroupIds}::text[]) AS v(id, group_id) WHERE "Question"."id" = v.id`;
+      }
+      const ungrouped = moved.filter(question => target.get(question.id) === null).map(question => question.id);
       if (ungrouped.length) await tx.question.updateMany({ where: { id: { in: ungrouped } }, data: { groupId: null } });
       return { ok: true as const, groupCount: ranked.length, questionCount: questions.length };
     }, { timeout: 30_000 });
