@@ -41,14 +41,16 @@ export type CorrectionLogEntry = Prisma.QuestionCorrectionGetPayload<{ select: t
 export async function getCorrectionPage(courseId: string, { page: requestedPage = 1, query = "" }: { page?: number; query?: string } = {}) {
   return timed("question_corrections_page", { courseId }, async () => {
     try {
-      const course = await db.course.findUnique({ where: { id: courseId }, select: { id: true, code: true, name: true } });
-      if (!course) return null;
       const keyword = query.trim();
       const where: Prisma.QuestionGroupWhereInput = {
         courseId,
         questions: { some: { file: PUBLISHED_FILES, ...(keyword ? { text: { contains: escapeLike(keyword), mode: "insensitive" as const } } : {}) } },
       };
-      const total = await db.questionGroup.count({ where });
+      const [course, total] = await Promise.all([
+        db.course.findUnique({ where: { id: courseId }, select: { id: true, code: true, name: true } }),
+        db.questionGroup.count({ where }),
+      ]);
+      if (!course) return null;
       const totalPages = Math.max(1, Math.ceil(total / CORRECTION_PAGE_SIZE));
       const page = Number.isInteger(requestedPage) && requestedPage > 0 ? Math.min(requestedPage, totalPages) : 1;
       const [groups, totalPapers, log] = await Promise.all([
