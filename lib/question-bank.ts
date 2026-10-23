@@ -2,7 +2,7 @@ import { ExamType, FileCategory, type Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { PUBLISHED_FILES } from "@/lib/file-visibility";
 import { logError } from "@/lib/logger";
-import { groupQuestions, normalizeQuestionText, rankGroups } from "@/lib/question-grouping";
+import { groupCorrectedQuestions, normalizeQuestionText, rankGroups } from "@/lib/question-grouping";
 
 const errorType = (error: unknown) => (error instanceof Error ? error.name : "Unknown");
 
@@ -13,6 +13,7 @@ export type RebuildResult = { ok: true; groupCount: number; questionCount: numbe
 
 // Regroups (US-15a) and re-ranks (US-16) every question of a course. Call it after questions are added, changed, or removed,
 // or after a paper moves to another course (for both courses). Groups whose key is unchanged keep their ID.
+// Admin corrections (pinned and split questions, see lib/question-corrections.ts) are applied on every rebuild, so they survive it.
 export async function rebuildQuestionBank(courseId: string): Promise<RebuildResult> {
   try {
     const course = await db.course.findUnique({ where: { id: courseId }, select: { id: true } });
@@ -25,9 +26,9 @@ export async function rebuildQuestionBank(courseId: string): Promise<RebuildResu
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${courseId}))`;
       const questions = await tx.question.findMany({
         where: { file: courseExams(courseId) },
-        select: { id: true, fileId: true, number: true, text: true, groupId: true, file: { select: { year: true } } },
+        select: { id: true, fileId: true, number: true, text: true, groupId: true, pinnedToQuestionId: true, splitOut: true, file: { select: { year: true } } },
       });
-      const ranked = rankGroups(groupQuestions(questions.map(({ id, fileId, number, text, file }) => ({ id, fileId, number, text, year: file.year }))));
+      const ranked = rankGroups(groupCorrectedQuestions(questions.map(({ id, fileId, number, text, pinnedToQuestionId, splitOut, file }) => ({ id, fileId, number, text, pinnedToQuestionId, splitOut, year: file.year }))));
       await tx.questionGroup.deleteMany({ where: { courseId, normalizedText: { notIn: ranked.map(group => group.normalizedText) } } });
       // Written in a few batched statements rather than one per group, so a large paper regroups quickly (US-14 cross-test).
       const existing = new Map((await tx.questionGroup.findMany({
