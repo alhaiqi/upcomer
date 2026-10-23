@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { readFile } from "node:fs/promises";
 import {
   compareWithBaseline, evaluateGrouping, kendallTauB, validateDataset, type Baseline, type EvalDataset, type Grouper, type Metrics,
 } from "@/lib/grouping-eval";
@@ -126,5 +127,13 @@ describe("compareWithBaseline", () => {
   it("fails without a baseline, or with one recorded for another version of the set", () => {
     expect(compareWithBaseline(toy, metrics, null)).toMatchObject({ passed: false, problems: [expect.stringContaining("No baseline")] });
     expect(compareWithBaseline({ ...toy, version: 2 }, metrics, baseline)).toMatchObject({ passed: false, problems: [expect.stringContaining("toy v1, not toy v2")] });
+  });
+});
+
+describe("the committed evaluation set", () => {
+  it("is valid and has a gold group for every question", async () => {
+    const dataset: EvalDataset = JSON.parse(await readFile("eval/grouping/synthetic/dataset.json", "utf8"));
+    expect(validateDataset(dataset)).toEqual([]);
+    expect(dataset.papers.flatMap(item => item.questions)).toHaveLength(evaluateGrouping(dataset).questionCount);
   });
 });
