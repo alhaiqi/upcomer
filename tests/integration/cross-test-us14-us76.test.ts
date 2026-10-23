@@ -5,8 +5,8 @@ import path from "node:path";
 
 // M4 cross-tests for M5's US-14 (automatic question extraction) and US-76 (see failed file processing), against a real
 // database, the real upload route, real stored files, and the real PDF.js extractor. Only the admin session is faked.
-// Tests named "KNOWN ISSUE" are written as `it.fails`: they state the correct behavior, fail today, and turn red when
-// the issue is fixed, so they can then become normal tests.
+// The issues these tests found (page footers, section headings, numbered instructions, scanner watermarks, simultaneous
+// retries, slow regrouping of large papers) are fixed on this branch, and the tests now check the fixed behavior.
 
 const { getAdminUser } = vi.hoisted(() => ({ getAdminUser: vi.fn() }));
 vi.mock("@/lib/auth", async original => ({ ...(await original<typeof import("@/lib/auth")>()), getAdminUser }));
@@ -119,19 +119,19 @@ describe("US-14: a typed PDF gives the correct question count", () => {
     expect(await extractExamQuestions(pdf)).toHaveLength(4);
   });
 
-  it.fails("KNOWN ISSUE: keeps a page footer out of the question text", async () => {
+  it("keeps a page footer out of the question text", async () => {
     const pdf = linesPdf([["1. Explain TCP congestion control, including", "slow start.", "Page 1 of 2"], ["2. Explain flow control.", "Page 2 of 2"]]);
     const extracted = await extractExamQuestions(pdf);
     expect(extracted[0]).not.toContain("Page 1 of 2");
   });
 
-  it.fails("KNOWN ISSUE: keeps a section heading out of the previous question's text", async () => {
+  it("keeps a section heading out of the previous question's text", async () => {
     const pdf = linesPdf([["Part A", "1. Define latency.", "Part B: Problems", "1. Compute the throughput."]]);
     const extracted = await extractExamQuestions(pdf);
     expect(extracted[0]).toBe("1. Define latency.");
   });
 
-  it.fails("KNOWN ISSUE: does not count numbered instructions before the first question as questions", async () => {
+  it("does not count numbered instructions before the first question as questions", async () => {
     const pdf = linesPdf([["Instructions:", "1. Calculators are not allowed.", "2. Write your answers in the booklet.", "Questions", "1. Define TCP.", "2. Define UDP.", "3. Define IP."]]);
     expect(await extractExamQuestions(pdf)).toHaveLength(3);
   });
@@ -160,10 +160,9 @@ describe("US-14: an image-only PDF fails with \"no extractable text\"", () => {
     }
   });
 
-  it.fails("KNOWN ISSUE: reports a scanned page with a scanner-app watermark as having no extractable text", async () => {
+  it("reports a scanned page with a scanner-app watermark as having no extractable text", async () => {
     const courseId = await newCourse();
     const { fileId } = await uploadExam(courseId, watermarkedScanPdf("Scanned with CamScanner"), "watermarked-scan.pdf");
-    // Today the one watermark line counts as text, so the reason is no_questions ("No numbered questions were found").
     expect((await runsOf(fileId))[0]).toMatchObject({ reason: "no_text" });
   });
 });
@@ -204,19 +203,15 @@ describe("US-76: failed runs show the stage and reason, and retry works", () => 
     expect(await processExamFile(material.fileId)).toEqual({ ok: false, reason: "not_eligible" });
   });
 
-  it("ends with the right questions and no run left running when five retries arrive at the same moment", async () => {
+  it("starts exactly one run when five retries arrive at the same moment, and ends with the right questions", async () => {
     const courseId = await newCourse();
     const { fileId } = await uploadExam(courseId, imageOnlyPdf(), "scan.pdf");
     await writeFile(await storedPath(fileId), Buffer.from(linesPdf([["1. Define TCP.", "2. Define UDP."]])));
     const results = await Promise.all(Array.from({ length: 5 }, () => retryFailedExam(fileId)));
-    // Found by this test: nothing locks between reading the latest run and starting a new one, so depending on timing
-    // several of the five retries run at once (3 of 5 in local runs), and about 1 run in 10 the latest run then ends as
-    // FAILED ("unexpected") although another run extracted the questions. See the cross-test report. What must always
-    // hold: the questions are right, at least one run succeeded, and no run is left RUNNING.
-    expect(results.some(result => result.ok)).toBe(true);
-    const runs = await runsOf(fileId);
-    expect(runs.every(run => run.status !== "RUNNING")).toBe(true);
-    expect(runs.some(run => run.status === "SUCCEEDED")).toBe(true);
+    // A per-file lock lets exactly one of them start a run; the others see it running and are refused.
+    expect(results.filter(result => result.ok)).toHaveLength(1);
+    expect(results.filter(result => !result.ok)).toEqual(Array(4).fill({ ok: false, reason: "not_failed" }));
+    expect((await runsOf(fileId)).map(run => run.status)).toEqual(["FAILED", "SUCCEEDED"]);
     expect(await questionsOf(fileId)).toEqual(["1. Define TCP.", "2. Define UDP."]);
     expect((await getConsolidatedExam(courseId)).questions).toHaveLength(2);
   });
