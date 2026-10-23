@@ -108,16 +108,23 @@ type Tx = Prisma.TransactionClient;
 type CorrectedQuestion = { id: string; groupId: string | null; pinnedQuestions: { id: string }[] };
 
 // Questions an admin moved onto this one follow it. Before this one leaves its group, they are pinned to another question that
-// stays there, so moving or splitting one question never takes the others with it.
+// stays there, so moving or splitting one question never takes the others with it. If nothing else stays, the first of them
+// is grouped by its own text again and the rest stay with it.
 async function keepFollowersInPlace(tx: Tx, question: CorrectedQuestion) {
-  if (!question.pinnedQuestions.length || !question.groupId) return;
+  if (!question.pinnedQuestions.length) return;
   const followers = question.pinnedQuestions.map(item => item.id);
-  const staying = await tx.question.findMany({
+  const staying = question.groupId ? await tx.question.findMany({
     where: { groupId: question.groupId, id: { notIn: [question.id, ...followers] }, file: PUBLISHED_FILES },
     select: { id: true, pinnedToQuestionId: true }, orderBy: [{ fileId: "asc" }, { number: "asc" }],
-  });
+  }) : [];
   const anchor = staying.find(item => !item.pinnedToQuestionId) ?? staying[0];
-  if (anchor) await tx.question.updateMany({ where: { id: { in: followers } }, data: { pinnedToQuestionId: anchor.id } });
+  if (anchor) {
+    await tx.question.updateMany({ where: { id: { in: followers } }, data: { pinnedToQuestionId: anchor.id } });
+    return;
+  }
+  const [first, ...rest] = await tx.question.findMany({ where: { id: { in: followers } }, select: { id: true }, orderBy: [{ fileId: "asc" }, { number: "asc" }] });
+  await tx.question.update({ where: { id: first.id }, data: { pinnedToQuestionId: null } });
+  if (rest.length) await tx.question.updateMany({ where: { id: { in: rest.map(item => item.id) } }, data: { pinnedToQuestionId: first.id } });
 }
 
 async function applyCorrection(tx: Tx, adminId: string, courseId: string, correction: Correction) {
