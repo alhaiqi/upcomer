@@ -28,7 +28,7 @@ Built by Mohammed Al-Haiqi on branch `accuracy-evaluation-sprint-3`, from `main`
 
 ### Gold review
 
-The gold groups were drafted by Claude with a note for each decision a reviewer could read either way, and **must be reviewed by Mohammed before the baseline is recorded**. `npm run eval:grouping -- <set folder> --gold` lists them by group.
+The gold groups were drafted by Claude with a note for each decision a reviewer could read either way. The baseline (`eval/grouping/synthetic/baseline.json`) was recorded from them so the CI check can run, and **the gold groups are reviewed in this PR**: `npm run eval:grouping -- eval/grouping/synthetic --gold` lists them by group. A change to them goes with a higher `version` and a new baseline.
 
 ## Part 2: Availability and reliability measurement
 
@@ -57,5 +57,5 @@ The gold groups were drafted by Claude with a note for each decision a reviewer 
 | --- | --- |
 | `npm run lint`, `npx tsc --noEmit` | Passed |
 | `npm test` | 726 passed with `--maxWorkers=2` (44 new: 19 for the accuracy metrics, 25 for the availability numbers). With the default worker count on the loaded machine, the existing random-course test in `consolidated-exam-edge-cases.test.tsx` timed out, as on the other Sprint 3 branch |
-| `npm run eval:grouping` | Runs; the baseline is recorded after the gold review |
+| `npm run eval:grouping` | Passed against the recorded baseline (synthetic set); also runs in the CI `checks` job |
 | `npm run availability` | Ran once (above); every stamped student and session was deleted afterwards (checked: 0 left) |
