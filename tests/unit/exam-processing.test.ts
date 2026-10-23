@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   file: { findUnique: vi.fn(), findMany: vi.fn() },
   run: { create: vi.fn(), update: vi.fn(), findFirst: vi.fn() },
-  countQuestions: vi.fn(), deleteQuestions: vi.fn(), createQuestions: vi.fn(), transaction: vi.fn(),
+  countQuestions: vi.fn(), deleteQuestions: vi.fn(), createQuestions: vi.fn(), transaction: vi.fn(), lock: vi.fn(),
   getOriginalFile: vi.fn(), extract: vi.fn(), rebuild: vi.fn(), log: vi.fn(),
 }));
 vi.mock("@/lib/db", () => ({ db: {
@@ -23,7 +23,7 @@ import { canRetryRun, processExamFile, retryFailedExam } from "@/lib/exam-proces
 
 beforeEach(() => {
   for (const mock of [mocks.file.findUnique, mocks.file.findMany, mocks.run.create, mocks.run.update, mocks.run.findFirst,
-    mocks.countQuestions, mocks.deleteQuestions, mocks.createQuestions, mocks.transaction, mocks.getOriginalFile, mocks.extract, mocks.rebuild, mocks.log]) mock.mockReset();
+    mocks.countQuestions, mocks.deleteQuestions, mocks.createQuestions, mocks.transaction, mocks.lock, mocks.getOriginalFile, mocks.extract, mocks.rebuild, mocks.log]) mock.mockReset();
   mocks.file.findUnique.mockResolvedValue({ id: "file-a", courseId: "course-a", category: "EXAM", status: "PUBLISHED", mimeType: "application/pdf" });
   mocks.run.create.mockResolvedValue({ id: "run-a" });
   mocks.run.update.mockResolvedValue({});
@@ -31,7 +31,7 @@ beforeEach(() => {
   mocks.extract.mockResolvedValue(["1. First question?", "2. Second question?"]);
   mocks.countQuestions.mockResolvedValue(0);
   mocks.rebuild.mockResolvedValue({ ok: true });
-  mocks.transaction.mockImplementation((work: (tx: object) => unknown) => work({ question: { deleteMany: mocks.deleteQuestions, createMany: mocks.createQuestions } }));
+  mocks.transaction.mockImplementation((work: (tx: object) => unknown) => work({ $executeRaw: mocks.lock, fileProcessingRun: mocks.run, question: { deleteMany: mocks.deleteQuestions, createMany: mocks.createQuestions } }));
 });
 
 describe("exam processing and retry", () => {
@@ -49,7 +49,7 @@ describe("exam processing and retry", () => {
     mocks.extract.mockRejectedValue(new ExtractionError("no_text"));
     expect(await processExamFile("file-a")).toMatchObject({ ok: false, reason: "no_text" });
     expect(mocks.run.update).toHaveBeenCalledWith({ where: { id: "run-a" }, data: { status: "FAILED", stage: "EXTRACTION", reason: "no_text" } });
-    expect(mocks.transaction).not.toHaveBeenCalled();
+    expect(mocks.createQuestions).not.toHaveBeenCalled();
   });
 
   it("records a grouping failure and allows retry", async () => {
@@ -71,7 +71,7 @@ describe("exam processing and retry", () => {
     mocks.countQuestions.mockResolvedValue(2);
     expect(await processExamFile("file-a")).toMatchObject({ ok: true, questionCount: 2 });
     expect(mocks.extract).not.toHaveBeenCalled();
-    expect(mocks.transaction).not.toHaveBeenCalled();
+    expect(mocks.createQuestions).not.toHaveBeenCalled();
     expect(mocks.rebuild).toHaveBeenCalledWith("course-a");
   });
 
@@ -95,5 +95,17 @@ describe("exam processing and retry", () => {
     expect(canRetryRun({ status: "RUNNING", createdAt: new Date("2026-10-18T11:30:00Z") }, now)).toBe(true);
     mocks.run.findFirst.mockResolvedValue({ status: "RUNNING", createdAt: new Date(Date.now() - 30 * 60_000) });
     expect(await retryFailedExam("file-a")).toMatchObject({ ok: true });
+  });
+
+  it("starts a run under a per-file lock, and refuses a retry another retry has just started", async () => {
+    await processExamFile("file-a");
+    expect(mocks.lock.mock.calls[0].slice(1)).toEqual(["exam-processing:file-a"]);
+    mocks.run.create.mockClear();
+    mocks.extract.mockClear();
+    // Failed when the retry was clicked, but another retry started a run before this one got the lock.
+    mocks.run.findFirst.mockResolvedValueOnce({ status: "FAILED" }).mockResolvedValueOnce({ status: "RUNNING", createdAt: new Date() });
+    expect(await retryFailedExam("file-a")).toEqual({ ok: false, reason: "not_failed" });
+    expect(mocks.run.create).not.toHaveBeenCalled();
+    expect(mocks.extract).not.toHaveBeenCalled();
   });
 });

@@ -20,7 +20,20 @@ const STALE_RUN_MS = 15 * 60 * 1000;
 export const canRetryRun = (run: { status: ProcessingStatus; createdAt: Date }, now = new Date()) =>
   run.status === ProcessingStatus.FAILED || (run.status === ProcessingStatus.RUNNING && now.getTime() - run.createdAt.getTime() > STALE_RUN_MS);
 
-export async function processExamFile(fileId: string) {
+// Starts a run for the file. Under a per-file lock, so simultaneous retries (a double click, two admins) start one run:
+// the others see it RUNNING and are refused. For a retry, only a failed or stale latest run may be replaced.
+async function startRun(fileId: string, retry: boolean) {
+  return db.$transaction(async tx => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`exam-processing:${fileId}`}))`;
+    if (retry) {
+      const latest = await tx.fileProcessingRun.findFirst({ where: { fileId }, orderBy: [{ createdAt: "desc" }, { id: "desc" }] });
+      if (!latest || !canRetryRun(latest)) return null;
+    }
+    return tx.fileProcessingRun.create({ data: { fileId } });
+  });
+}
+
+export async function processExamFile(fileId: string, { retry = false } = {}) {
   let file;
   try {
     file = await db.courseFile.findUnique({ where: { id: fileId }, select: { id: true, courseId: true, category: true, status: true, mimeType: true } });
@@ -31,11 +44,12 @@ export async function processExamFile(fileId: string) {
   if (!file || file.category !== FileCategory.EXAM || file.status !== FileStatus.PUBLISHED) return { ok: false as const, reason: "not_eligible" };
   let run;
   try {
-    run = await db.fileProcessingRun.create({ data: { fileId } });
+    run = await startRun(fileId, retry);
   } catch (error) {
     logError("exam_processing_failed", { fileId, stage: ProcessingStage.EXTRACTION, reason: "unexpected", errorType: error instanceof Error ? error.name : "Unknown" });
     return { ok: false as const, reason: "unexpected" };
   }
+  if (!run) return { ok: false as const, reason: "not_failed" };
   let stage: ProcessingStage = ProcessingStage.EXTRACTION;
   try {
     // Older files may already have questions. Keep those rows and just rank them.
@@ -80,5 +94,6 @@ export async function getExamProcessingRuns() {
 export async function retryFailedExam(fileId: string) {
   const latest = await db.fileProcessingRun.findFirst({ where: { fileId }, orderBy: [{ createdAt: "desc" }, { id: "desc" }] });
   if (!latest || !canRetryRun(latest)) return { ok: false as const, reason: "not_failed" };
-  return processExamFile(fileId);
+  // Checked again under the lock when the run starts.
+  return processExamFile(fileId, { retry: true });
 }
