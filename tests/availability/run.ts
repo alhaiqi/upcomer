@@ -341,6 +341,10 @@ async function main() {
     const login = await new Client(BASE_URL).get("/login");
     const coursePage = await users[0].client.get(`/courses/${courses[0].id}`);
     const world: World = { courses, files, users, actions: { logIn: actionIdFor(login.body, "Log in"), addCourse: actionIdFor(coursePage.body, "Add to My Courses") } };
+    // Each route's first request on a fresh server is slow (code loaded, caches empty); that is start-up, not availability,
+    // so every API is called twice before measuring.
+    const warmUp = createRng(SEED);
+    for (const api of APIS) for (let round = 0; round < 2; round++) await request(api, users[0], world, warmUp);
     const stages: StageRecord[] = [];
     for (const count of STAGES) {
       const stage = await runStage(count, world, db);
