@@ -52,7 +52,14 @@ type LogEvent =
   | "slow_operation"
   | "submission_reviewed"
   | "submission_review_refused"
-  | "submission_review_rate_limited";
+  | "submission_review_rate_limited"
+  | "question_grouping_completed"
+  | "question_grouping_low_confidence"
+  | "question_report_submitted"
+  | "question_report_refused"
+  | "question_report_rate_limited"
+  | "question_report_failed"
+  | "question_report_retrieval_failed";
 
 export type { LogEvent };
 export type LogLevel = "error" | "warn" | "info";
@@ -126,6 +133,14 @@ export const EVENT_LEVELS: Record<LogEvent, LogLevel> = {
   submission_reviewed: "info",
   submission_review_refused: "warn",
   submission_review_rate_limited: "warn",
+  // Member 2 (Sprint 3): reworded grouping (US-15b) and question reports (US-23). Report notes are never logged.
+  question_grouping_completed: "info",
+  question_grouping_low_confidence: "warn",
+  question_report_submitted: "info",
+  question_report_refused: "warn",
+  question_report_rate_limited: "warn",
+  question_report_failed: "error",
+  question_report_retrieval_failed: "error",
 };
 
 // A refusal event that was caused by the database failing is a real failure, so it is raised to error.
