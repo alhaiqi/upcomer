@@ -152,9 +152,17 @@ describe("matchQuestions (US-15b)", () => {
     expect(matchQuestions("Which statement about TCP isn't true?", "Which statement about TCP is not true?")).toMatchObject({ kind: "reworded" });
     expect(matchQuestions("Explain what affects the transmission delay of a link.", "Calculate the transmission delay of a link.")).toBeNull();
   });
-  it("allows different numbers only in questions with enough words", () => {
+  it("keeps a number that names what is asked about, such as a layer, an RFC, or a port", () => {
     expect(matchQuestions("Explain RFC 793.", "Explain RFC 791.")).toBeNull();
     expect(matchQuestions("Explain RFC 793.", "Describe RFC 793.")).toMatchObject({ kind: "reworded" });
+    expect(matchQuestions("Explain the role of layer 3 in the OSI model.", "Explain the role of layer 4 in the OSI model.")).toBeNull();
+    expect(matchQuestions("What runs on port 80?", "What runs on port 443?")).toBeNull();
+    expect(matchQuestions("Question about topic number 5 in computer networks?", "Question about topic number 6 in computer networks?")).toBeNull();
+    expect(matchQuestions("Describe the role of layer 3 in the OSI model.", "What is the purpose of layer 3 in the OSI model?")).toMatchObject({ kind: "reworded" });
+  });
+  it("allows other numbers to differ only in questions with enough words", () => {
+    expect(matchQuestions("Sort 5 integers.", "Sort 7 integers.")).toBeNull();
+    expect(matchQuestions("Sort 5 integers using merge sort.", "Using merge sort, sort 7 integers.")).toMatchObject({ kind: "reworded" });
   });
   it("reports identical and near-identical questions as such, and nothing for empty text", () => {
     expect(matchQuestions("Define a socket.", "define a SOCKET")).toEqual({ kind: "identical", score: 1 });

@@ -76,8 +76,8 @@ export function isNearIdentical(a: string, b: string) {
 //   insertion/selection, graph/tree) always keeps two questions apart, however long they are.
 // - The shared words must cover at least REWORDED_THRESHOLD of both versions (Dice coefficient).
 // - Math expressions (x^2, a+b, x=3), negations ("not", "except"), and a calculation against an explanation must match.
-// - Different numbers are allowed only in questions of MIN_WORDS_FOR_OTHER_NUMBERS content words or more, so
-//   "Explain RFC 793" and "Explain RFC 791" stay apart.
+// - A number that names what is asked about ("layer 3", "RFC 793", "port 80") must match. Other numbers are values and
+//   may differ, but only in questions of MIN_WORDS_FOR_OTHER_NUMBERS content words or more.
 export const REWORDED_THRESHOLD = 0.75;
 // A reworded match below this score is grouped, but logged so an admin can check it (question_grouping_low_confidence).
 export const LOW_CONFIDENCE_BELOW = 0.85;
@@ -97,6 +97,14 @@ const STOP_WORDS = new Set(`
 const EXPLAIN_WORDS = new Set(["explain", "describe", "discuss", "define", "why", "justify", "clarify", "elaborate"]);
 // Calculation verbs are folded into one marker instead of being compared as words.
 const COMPUTE_WORDS = new Set(["calculate", "compute", "determine", "evaluate", "solve", "derive", "obtain", "estimate", "find"]);
+// A number right after one of these names the thing asked about ("layer 3", "chapter 2"); any other number is a value
+// ("a 1500-byte packet") and may differ between versions of the same exercise.
+const IDENTIFIER_NOUNS = new Set(`
+  layer rfc chapter section part question phase stage step level type class case version figure table problem
+  exercise lab lecture week unit page line row column node router host port process thread bit topic item option rule
+  theorem lemma equation algorithm program task category tier generation
+`.split(/\s+/).filter(Boolean));
+const NUMBER = /^\p{N}+(?:[.,]\p{N}+)*$/u;
 const NEGATIONS = new Set(["not", "no", "never", "none", "without", "except", "false", "incorrect", "invalid", "cannot"]);
 const SYNONYMS: Record<string, string> = Object.fromEntries(Object.entries({
   compare: ["difference", "differ", "compare", "comparison", "contrast", "distinguish", "differentiate", "versus", "vs"],
@@ -124,6 +132,8 @@ const commonPrefix = (a: string, b: string) => {
 // "connection"/"connectionless" are opposites, so a "-less" form never matches.
 function sameWord(a: string, b: string) {
   if (a === b) return true;
+  // A numbered name ("layer#3") only ever matches itself.
+  if (a.includes("#") || b.includes("#")) return false;
   const [short, long] = a.length <= b.length ? [a, b] : [b, a];
   if (long.endsWith("less") && !short.endsWith("less")) return false;
   if (short.length >= 5 && long.startsWith(short)) return true;
@@ -146,37 +156,39 @@ export function questionFeatures(text: string): QuestionFeatures {
   const negations: string[] = [];
   let computes = false;
   let explains = false;
+  const parts: string[] = [];
   for (const token of normalizeQuestionText(expanded).split(" ").filter(Boolean)) {
-    if (/^\p{N}+(?:[.,]\p{N}+)*$/u.test(token)) {
-      numbers.push(token);
+    if (NUMBER.test(token)) {
+      parts.push(token);
       continue;
     }
     // "three-way", "TCP/IP", and "1500-byte" are words joined together; "a-b", "x^2", and "i/o" are expressions.
-    const parts = token.split(/[-/]/);
-    const joinedWords = /^[\p{L}\p{N}]+(?:[-/][\p{L}\p{N}]+)*$/u.test(token) && parts.every(part => part.length >= 2 || /^\p{N}+$/u.test(part));
-    if (!joinedWords) {
-      if (/^\p{L}$/u.test(token)) continue; // a sub-part label such as "(a)"
-      math.push(token);
+    const joined = token.split(/[-/]/);
+    if (/^[\p{L}\p{N}]+(?:[-/][\p{L}\p{N}]+)*$/u.test(token) && joined.every(part => part.length >= 2 || NUMBER.test(part))) parts.push(...joined);
+    else if (!/^\p{L}$/u.test(token)) math.push(token); // a lone letter is a sub-part label such as "(a)"
+  }
+  for (const [index, part] of parts.entries()) {
+    if (NUMBER.test(part)) {
+      // "layer 3", "RFC 793", "topic number 5": the number says which one is meant, so it has to match. "Number" itself
+      // is looked past, so "the binary number 1101" stays a value.
+      const before = parts[index - 1] === "number" || parts[index - 1] === "no" ? index - 2 : index - 1;
+      const noun = stem(parts[before] ?? "");
+      if (IDENTIFIER_NOUNS.has(noun)) words.push(`${noun}#${part}`);
+      else numbers.push(part);
       continue;
     }
-    for (const part of parts) {
-      if (/^\p{N}+$/u.test(part)) {
-        numbers.push(part);
-        continue;
-      }
-      if (COMPUTE_WORDS.has(part)) {
-        computes = true;
-        continue;
-      }
-      if (EXPLAIN_WORDS.has(part)) explains = true;
-      if (NEGATIONS.has(part)) {
-        negations.push(part === "cannot" ? "not" : part);
-        continue;
-      }
-      if (STOP_WORDS.has(part) || part.length < 2) continue;
-      const stemmed = stem(part);
-      words.push(SYNONYMS[stemmed] ?? SYNONYMS[part] ?? stemmed);
+    if (COMPUTE_WORDS.has(part)) {
+      computes = true;
+      continue;
     }
+    if (EXPLAIN_WORDS.has(part)) explains = true;
+    if (NEGATIONS.has(part)) {
+      negations.push(part === "cannot" ? "not" : part);
+      continue;
+    }
+    if (STOP_WORDS.has(part) || part.length < 2) continue;
+    const stemmed = stem(part);
+    words.push(SYNONYMS[stemmed] ?? SYNONYMS[part] ?? stemmed);
   }
   return { words: sortedUnique(words), numbers: [...numbers].sort(), math: sortedUnique(math), negations: sortedUnique(negations), computes, explains };
 }
