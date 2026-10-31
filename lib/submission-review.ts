@@ -26,6 +26,16 @@ export const getReviewQueue = (requestedPage = 1) => timed("review_queue", {}, a
 
 export type ReviewOutcome = { ok: true } | { ok: false; error: ReviewRefusal };
 
+
+
+// trim() keeps invisible characters such as zero-width spaces, so a reason made only of them would show the student
+// an empty "Reason:". These are removed before checking that something readable is left: whitespace, format characters
+// (zero-width spaces and joiners, byte order marks), and the blank fillers that count as letters or symbols.
+const BLANK_FILLERS = String.fromCodePoint(0x115f, 0x1160, 0x3164, 0xffa0, 0x2800);
+const INVISIBLE = new RegExp(String.raw`[\p{White_Space}\p{Cf}${BLANK_FILLERS}]`, "gu");
+export const readable = (reason: string) => reason.replace(INVISIBLE, "").length > 0;
+
+
 // Publishes or rejects one submission for an admin. The reason is passed on to rejectSubmission and never logged.
 export async function reviewSubmission(adminId: string, operation: "publish" | "reject", fileId: string, reason = ""): Promise<ReviewOutcome> {
   const limit = checkRateLimit(`review:${adminId}`, reviewLimit(), REVIEW_WINDOW_MS);

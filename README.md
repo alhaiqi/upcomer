@@ -28,6 +28,8 @@ The seed is repeatable and includes one record for a deliberately missing physic
 | `npm run test:integration` | Integration tests against a real database (`tests/integration/`); requires a migrated database. They create and delete their own rows |
 | `npm run load -- <scenario>` | Load test with autocannon against a production build, for example `npm run load -- review-queue`; writes `reports/load-<scenario>-<date>.md` and `.json`. `LOAD_SECONDS`, `LOAD_STAGES` (for example `1,10,50`), and `LOAD_SKIP_BUILD=1` change a run. Stop any dev server first |
 | `npm run reliability` | Randomized reliability trials against a production build; writes `reports/reliability-<date>.md` and `.json`. `RELIABILITY_RUNS` (default 50 per feature) and `RELIABILITY_SEED` repeat a run. Stop any dev server first |
+| `npm run eval:grouping` | Grouping and ranking accuracy on the committed evaluation set (US-93); fails if it dropped below the baseline. `npm run eval:grouping -- <set folder>` evaluates another set, `--details` lists the wrong groups, `--gold` lists the gold groups for review, `--update-baseline` records a reviewed result. Runs in CI |
+| `npm run availability` | Availability and reliability of every API with 1 to 100 concurrent users against a production build; writes `reports/availability-<date>.md` and `.json`. `AVAILABILITY_STAGES`, `AVAILABILITY_SECONDS`, `AVAILABILITY_TARGET`, `AVAILABILITY_SEED`, and `AVAILABILITY_SKIP_BUILD=1` change a run. Stop any dev server first |
 | `npm run db:migrate` | Apply/create Prisma migrations |
 | `npm run db:seed` | Seed local data |
 | `npm run db:seed-demo` | Add a large set of demo data (see Demo data); `npm run db:seed-demo -- --reset` removes it |
@@ -40,6 +42,7 @@ The seed is repeatable and includes one record for a deliberately missing physic
 | `/courses/:courseId` | Course home |
 | `/courses/:courseId/exams` | Exams for that course |
 | `/courses/:courseId/materials` | Materials for that course |
+| `/courses/:courseId/exam` | The Upcomer Exam: every distinct question once, most likely first. Logged-in students can report a question under it, mark questions done and continue where they stopped (US-21), and switch to their personal order (US-28); optional `reported`, `report_error`, `progress_error`, `at`, and `order=personal` query parameters |
 | `/courses/:courseId/questions` | The course's question bank, most frequent first; optional `q`, `year`, `termId`, `examType`, and `professorId` query parameters |
 | `/files/:fileId` | Original bytes for a stored file record |
 | `/admin/uploads` | Admin upload menu |
@@ -59,9 +62,12 @@ The seed is repeatable and includes one record for a deliberately missing physic
 | `/admin/files/:id` | Edit one file's course, professor, year, term, type, and topic; optional `error` query parameter |
 | `/admin/submissions` | The review queue: pending submissions, oldest first, 20 per page, each with Publish and a Reject form that needs a reason; optional `page`, `published`, `rejected`, and `error` query parameters; admins only |
 | `/admin/questions` | Extracted question counts per course and a "Regroup and rank" button; optional `rebuilt`, `groups`, and `error` query parameters; admins only |
+
 | `/admin/questions/:courseId` | Question corrections: the course's question groups in rank order, 20 per page, each question with a "Correct" link, and the activity log of the latest 50 corrections; optional `q` and `page` query parameters; admins only |
 | `/admin/questions/:courseId/:questionId` | Correct one question: edit its text, move it to another group, split it into its own group, or undo a move or split, with its correction history; optional `saved`, `regroup`, and `error` query parameters; admins only |
 | `/admin/processing` | Latest exam processing result per file, with the failed stage, reason, and an admin retry button |
+| `/admin/reports` | Questions students reported, one item per question, reported longest ago first, 20 per page; optional `page` query parameter; admins only |
+
 | `/admin/monitoring` | Logged errors and warnings, the 24-hour summary, and the alert status; optional `level`, `event`, and `range` query parameters; admins only |
 | `/submit` | Submit a past exam or course material for review; optional `error`, `courseId`, and `category` query parameters; requires a session |
 | `/my-submissions` | The logged-in student's submissions with their status and, if rejected, the reason; optional `submitted` query parameter; requires a session |
@@ -207,12 +213,96 @@ US-15a (group identical and near-identical questions), US-16 (rank questions by 
 - **Tables** (migration `20261016000000_question_bank`):
   - `Question`: one extracted question, with `fileId` (its exam paper), `number` (its position in the paper, unique per paper), `text`, and `groupId`.
   - `QuestionGroup`: `courseId`, `text` (the version shown), `normalizedText` (the grouping key, unique per course), `paperCount`, and `rank` (1 is the most frequent). A group's papers are the files of its questions, so they cannot drift apart. Only `EXAM` files are grouped, and a question's course is always its paper's current course.
-- **Grouping** (`lib/question-grouping.ts`). These never matter: case, spacing, sentence punctuation, a leading number (`Q3.`, `Question 2)`, `3.`, `(4)`), marks such as `(10 points)`, or spaces around a symbol. Math symbols are kept, so `a+b` and `a-b` are different questions. *Near-identical* means the same words in the same order, allowing one typo in a word of 6+ letters that keeps its first letter (`recieve`/`receive`, `normalise`/`normalize`), at most one typo per 8 words. Numbers, acronyms, and short words must match exactly, so `TCP`/`UDP`, `x^2`/`x^3`, `cable`/`table`, and `cyclic`/`acyclic` stay apart. Reworded questions are US-15b.
+- **Grouping** (`lib/question-grouping.ts`). These never matter: case, spacing, sentence punctuation, a leading number (`Q3.`, `Question 2)`, `3.`, `(4)`), marks such as `(10 points)`, or spaces around a symbol. Math symbols are kept, so `a+b` and `a-b` are different questions. *Near-identical* means the same words in the same order, allowing one typo in a word of 6+ letters that keeps its first letter (`recieve`/`receive`, `normalise`/`normalize`), at most one typo per 8 words. Numbers, acronyms, and short words must match exactly, so `TCP`/`UDP`, `x^2`/`x^3`, `cable`/`table`, and `cyclic`/`acyclic` stay apart. Reworded questions are grouped too, since Sprint 3 (US-15b, below).
 - **Ranking.** A group's paper count is its number of distinct papers, so a repeat inside one paper counts once. Groups are sorted by paper count, then by the most recent year they appeared, then by text. The same questions always give the same order.
 - **When it runs.** `rebuildQuestionBank(courseId)` in `lib/question-bank.ts` regroups and re-ranks one course in a single transaction, holding a per-course lock so two runs cannot interleave. Call it after a paper's questions are added, changed, or removed, and for both courses after a paper moves course. A group whose key does not change keeps its ID. Admins can also run it from `/admin/questions`.
 - **Search** (`getQuestionBank(courseId, filters)`). The keyword is matched the same way questions are grouped. It combines with the year, term, type, and professor filters, and one paper has to satisfy every filter. Results keep the ranking order. An empty course says "No questions have been extracted for this course yet.", and a search with no match says "No questions match your search."
 
 The keyword is never logged. Tests are in `tests/unit/question-grouping.test.ts`, `tests/unit/question-bank.test.ts`, `tests/unit/question-bank-pages.test.tsx`, and `tests/e2e/question-bank.spec.ts`. `npm run db:seed` adds sample questions to the two EECE350 exams. Shared files changed: `prisma/schema.prisma`, `prisma/seed.ts`, `lib/logger.ts` (the four events above), `app/courses/[courseId]/page.tsx` (Question Bank card), `app/admin/catalog/page.tsx` (Question bank card), and `app/globals.css` (`.question-list`).
+
+## Reworded grouping and question reports (Member 2, Sprint 3)
+
+US-15b (group reworded equivalent questions) and US-23 (report a wrong question).
+
+### Reworded grouping (US-15b)
+
+`groupQuestions` in `lib/question-grouping.ts` first tries the US-15a rules. When neither an identical nor a near-identical group fits, the question joins the group whose first question it best *rewords*. Ties go to the earlier group. Groups are still compared by their first question only, so rewordings cannot chain.
+
+- **Content words.** Two versions are compared by what is left after dropping:
+  - function words, and the instruction itself ("Explain", "Describe", "What is", "List");
+  - plurals and third-person endings (`queries`/`query`, `resolves`/`resolve`), which fold together;
+  - a few exam synonyms (`difference`/`compare`/`contrast`/`distinguish`, `advantage`/`benefit`, `stage`/`step`/`phase`).
+- **Other forms of a word** count as the same word, so `forward` matches `forwarded` and `normalize` matches `normalization`. A one-letter typo in a long word also counts, as in US-15a. A `-less` form never matches (`connection`/`connectionless`).
+- **The rule.** One version may only add words to the other, and the shared words must cover at least `REWORDED_THRESHOLD` (0.75, Dice coefficient) of both. A content word swapped for another always keeps two questions apart, however long they are: `TCP`/`UDP`, `IPv4`/`IPv6`, `insertion`/`selection`, `advantages`/`disadvantages`, `3NF`/`BCNF`.
+- **Must match exactly.** Math expressions (`x^2`, `a+b`, `x=3`), negations (`not`, `except`, `isn't`), a calculation against an explanation of the same thing, and a number that names what is asked about (`layer 3`, `RFC 793`, `port 80`, `topic number 5`).
+- **Numbers may differ.** Other numbers are values. In a question of 3 or more content words they may differ, so the same exercise with other numbers is one question ("a 1500-byte packet on a 10 Mbps link" and "a 1000 byte packet over a 100 Mbps link").
+- **For US-93.** `matchQuestions(a, b)` returns the decision for one pair (`identical`, `near_identical`, `reworded` with its score, or `null`). Use it, or `groupQuestions`, to measure precision and recall on the hand-checked set. Both are pure, so the same input always gives the same result.
+- **Monitoring.** After each rebuild commits, `rebuildQuestionBank` logs:
+  - one `question_grouping_completed` line with `questionCount`, `groupCount`, `rewordedMatches`, and `lowConfidenceMatches`;
+  - one `question_grouping_low_confidence` warning for each reworded match scoring under `LOW_CONFIDENCE_BELOW` (0.85), with `questionId`, `matchedQuestionId`, and `score`, at most 20 per rebuild.
+
+  Admins can filter both on `/admin/monitoring`. Question text is never logged.
+
+### Question reports (US-23)
+
+- **Table** (migration `20261024000000_question_reports`). `QuestionReport` holds one student's report of one question:
+  - `courseId`, and `groupId` (set to null if a regroup removes the group);
+  - `reporterId`;
+  - `questionText`, the question as the student saw it, taken from the stored group and never from the form;
+  - `reason` (`WRONG_GROUPING`, `WRONG_TEXT`, `NOT_A_QUESTION`, `OTHER`), and an optional `note` of up to 500 characters;
+  - `status` (`OPEN`, `RESOLVED`, `DISMISSED`), `closedAt`, and `closedById`.
+- **Reporting.** On `/courses/:courseId/exam`, each question has a closed "Report a problem with question N" form for logged-in students. Visitors see a "Log in" link that comes back to the exam. `reportQuestion` in `lib/question-reports.ts`:
+  - checks a per-student limit (`QUESTION_REPORT_RATE_LIMIT_PER_MINUTE`, default 10);
+  - checks the reason, and that the note is 500 characters or fewer;
+  - accepts only a question from a published paper;
+  - holds a per-student, per-question lock, and refuses a second report while the student's first one is open ("You already reported this question.").
+
+  The student returns to the same question with the outcome.
+- **The admin queue.** `/admin/reports`, linked from `/admin/catalog`, shows each question with open reports as one item, reported longest ago first, 20 per page. Each item has the course, rank, paper count, how many students reported it and why, their notes, and a link to the course's Upcomer Exam. A second student's report of the same question joins its item and does not open a second one. A question regrouped away since it was reported is shown with the text the student saw.
+- **For US-75.** `closeQuestionReports(adminId, { groupId } | { reportIds }, "RESOLVED" | "DISMISSED")` closes open reports and returns how many were closed. The queue shows only `OPEN` reports.
+- **Monitoring.** `question_report_submitted` (info), `question_report_refused` and `question_report_rate_limited` (warn), and `question_report_failed` and `question_report_retrieval_failed` (error). They carry IDs, the reason, and error types. The note is never logged.
+
+Tests: `tests/unit/question-grouping.test.ts`, `tests/unit/question-bank.test.ts`, `tests/unit/question-reports.test.ts`, `tests/unit/question-report-pages.test.tsx`, and `tests/e2e/question-reports.spec.ts`. Shared files changed: `prisma/schema.prisma`, `lib/logger.ts`, `lib/submission-review.ts` (exports `readable`), `components/consolidated-exam.tsx` and `app/courses/[courseId]/exam/page.tsx` (the report form and notices), `tests/unit/consolidated-exam-page.test.tsx` (mocks the session), `app/admin/catalog/page.tsx` (Question reports card), and `.env.example`.
+
+## Study progress and the personal order (Member 3, Sprint 3)
+
+US-21 (mark questions done and resume), US-33 (learning profile kept per course), and US-28 (personal ordering of the Upcomer Exam). US-24, US-25, and US-27 (Mustafa Ergaibi and unassigned) are **not** implemented here; see "Placeholders" below.
+
+After pulling, run `npx prisma generate` and `npm run db:migrate`. Two migrations are new: `20261027000000_learning_profile` and `20261028000000_question_progress`.
+
+### Mark done and resume (US-21)
+
+- **Table** `QuestionProgress`: one row per question a student marked done. It holds `userId`, `courseId`, `groupId`, `sourceQuestionIds` (the group's questions when it was marked, its first question first), and `doneAt`. A student can mark a question once (unique on `userId` and `groupId`).
+- **On the exam.** Each question has a **Mark done** button, and a done question shows "✓ Done" with **Undo**. Above the questions, "N of M questions done. Continue at question K" names the first question not done, in the order shown. Opening the exam scrolls there; marking or undoing a question scrolls back to it (`?at=N`, because Next.js drops a redirect's `#question-N` after a server action). Without JavaScript, the link and the `#question-N` do the same. Visitors see neither.
+- **Whose progress.** `markQuestionAction` calls `requireUser()` first and never reads a user ID from the form; every read is filtered by the session user, so one student never sees another's progress. Only questions from a course's published exam papers can be marked. Marks per student per minute are limited by `QUESTION_PROGRESS_RATE_LIMIT_PER_MINUTE` (default 60); one student's clicks are serialized with a lock.
+- **After a regroup.** A regroup that changes a group's first question replaces the group. Its marks are kept (`groupId` is set to null) and re-linked, in the same course only, to the group that now holds the marked question, or else most of its other questions. A mark whose questions are all gone stays hidden rather than attached to a guess.
+- **Marking does not change the learning profile.**
+
+### Learning profile kept per course (US-33)
+
+- **Table** `LearningTopic`: one row per student, course, and topic (primary key `userId`, `courseId`, `topicKey`), holding `weakness`, from 0 (strong) to 1 (weak). The course is part of the key, so a change in one course never changes another, and two courses with a topic of the same name keep separate rows. `topicKey` ignores case and spacing.
+- **A question's topic** is its exam papers' `CourseFile.topic` (set on upload or at `/admin/files`); when they disagree, the most common, then the newest paper's.
+- **Writing it.** `setTopicWeakness(userId, courseId, topic, weakness)` in `lib/learning-profile.ts` is the one write path, for US-24 and US-25 to call. `getLearningProfile(userId, courseId)` reads one course.
+
+### Personal order (US-28)
+
+- Logged-in students get a **Frequency order / Personal order** switch. `?order=personal` shows one list, "Your order", sorted by `personalPriority` for each question; ties keep the frequency order. Each question keeps its number, tier badge, mark form, and report form. **Frequency order** (the address without `?order=personal`) restores the stored ranking.
+- A student with no profile rows in the course sees the frequency order with "You have no learning profile for this course yet, so this is the frequency order." Visitors always get the frequency order.
+
+### Placeholders for other stories
+
+Both are in `lib/personal-order.ts`, marked `PLACEHOLDER`:
+- **`personalPriority(paperCount, totalPapers, weakness)`**, for US-27: `share of papers × (0.5 + weakness)`. Replace this one function.
+- **`NEUTRAL_WEAKNESS = 0.5`**, for US-24's neutral default: the weakness of a question with no topic, or a topic without a score.
+
+### Known limitations
+
+- **Nothing writes `weakness` yet.** Until US-24 or US-25 exists, every real student's profile is empty, so the personal order shows the frequency order with the "no learning profile" note. The tests write profiles with `setTopicWeakness`, and US-33's "practice" is simulated the same way.
+- **A report sent from the personal order returns to the frequency order**, because the report action (US-23) does not keep `order=personal`. Questions keep their numbers, so its notice and `#question-N` still point at the right question.
+
+Monitoring: see the events table (`question_progress_*`, `learning_profile_*`). Topics are never logged.
+
+Tests: `tests/unit/learning-profile.test.ts`, `tests/unit/question-progress.test.ts`, `tests/unit/personal-order.test.ts`, `tests/unit/study-progress-pages.test.tsx`, `tests/unit/personal-order-pages.test.tsx`, `tests/integration/learning-profile.test.ts`, `tests/integration/question-progress.test.ts`, `tests/integration/personal-order.test.ts`, `tests/e2e/study-progress.spec.ts`, and `tests/e2e/personal-order.spec.ts`. They create their own courses and students and delete them. Shared files changed: `prisma/schema.prisma`, `lib/logger.ts`, `components/consolidated-exam.tsx`, `app/courses/[courseId]/exam/page.tsx`, `tests/unit/question-report-pages.test.tsx` (one mock line), `README.md`, and `.env.example`; the exact lines are in `MEMBER_3_SPRINT_3_IMPLEMENTATION_REPORT.md`.
 
 ## Submissions (US-13)
 
@@ -292,6 +382,31 @@ The service is `lib/question-corrections.ts` with messages in `lib/question-corr
 `tests/integration/exam-pipeline.test.ts` runs the exam pipeline end to end against a real database: five sample exam PDFs (built in `tests/integration/fixtures/sample-exams.ts`) are uploaded through `POST /api/admin/uploads`, their questions extracted, grouped and ranked by `rebuildQuestionBank`, and the result checked against the expected consolidated ordered exam (`getConsolidatedExam`), question by question, with counts, tiers, and papers. Other tests cover upload order, concurrent uploads, pending and rejected submissions, materials, deleted and re-tagged papers, non-admin uploads, and a 20-paper course within 1 s per stage. They run in CI with `npm run test:integration`.
 
 Exam uploads and published exam submissions now run PDF text extraction, store numbered questions, and rebuild the course's question bank. Each attempt is saved as a processing run. Admins can see its stage and reason, then retry failures at `/admin/processing`. Image-only PDFs fail with "No extractable text"; unreadable PDFs fail separately. Existing questions on older files are kept and regrouped. Load tests: `npm run load -- ordered-exam` and `npm run load -- exam-upload`. `PIPELINE_INTEGRATION_REPORT.md` records the earlier test results, before extraction was connected.
+
+## Accuracy evaluation set (US-93)
+
+A hand-checked set of exam questions with their correct ("gold") groups measures how well grouping (US-15a) and ranking (US-16) work, and catches regressions when the grouping logic changes, or later its model or prompt (US-15b).
+
+- **The set** is versioned with the code: `eval/grouping/synthetic/dataset.json`, 16 made-up papers in two courses (78 questions, 32 gold groups) written to look like extracted papers. Each question is `[gold group, text as extracted]`; `notes` explains the gold decisions a reviewer could read either way. Change the papers or gold groups only together with a higher `version`, which makes the old baseline unusable on purpose.
+- **Real papers stay local.** Sets built from real past papers go in `eval/grouping/local/` (gitignored, because the repository is public), for example the hand-transcribed MATH 201 Quiz 1 set, and run with `npm run eval:grouping -- eval/grouping/local/math201-quiz1`.
+- **Metrics** (`lib/grouping-eval.ts`): pair precision, recall, and F1 (over every pair of questions in a course: grouped together vs really the same question), gold groups reproduced exactly, questions shown with the right paper count, Kendall tau-b rank correlation with the gold ranking, and top-5 precision.
+- **Regression check.** Each set folder has a `baseline.json` (set name and version, grouper, metrics, date). A run fails when a metric drops more than 0.02 below it or falls under its floor (pair precision 0.95, pair F1 0.6, rank correlation 0.6), or when the baseline belongs to another version of the set. `--update-baseline` records a new one after the result is reviewed.
+- **A new grouper** (a model or prompt for US-15b) implements the `Grouper` type and is evaluated the same way; its name and version are stored in the baseline.
+
+Tests: `tests/unit/grouping-eval.test.ts`. Report: `ACCURACY_AND_AVAILABILITY_REPORT.md`.
+
+## Availability and reliability
+
+`npm run availability` measures every API's availability and reliability as the number of concurrent users grows (1, 10, 25, 50, 100 by default). Logged-in students repeat a weighted mix of 10 APIs: catalog search, course page, exam list, question bank, ordered exam, opening a file, My Courses, profile, logging in, and adding a course.
+
+- **Availability** = successful requests / total requests, per API. A request fails when it times out (10 s), the connection fails, the server answers 5xx, or it answers a status that API never gives for that request.
+- **Reliability** is stricter: the reply must also be correct (the page shows the course, the file is a PDF, the login redirects to My Courses) and within the latency target (1 s).
+- **Per API and stage:** requests, successes, failures, availability, error rate, reliability, p50/p95/p99/max latency, throughput, timeouts, and error types. **Per stage:** machine CPU, the server's memory, database connections, and the most requests in flight. **After the run:** the time to recover to normal replies. It also gives the yearly downtime each availability means, the "nines", and a 95% lower bound (with no failure in N requests, a run can only show about 1 - 3/N).
+- **Capacity** is the most users at which every API met the availability target (`AVAILABILITY_TARGET`, default 99.9%) and the overall p99 stayed within 1 s. The report also lists, per API, the failures that only appeared at higher load.
+
+More users do not change availability by themselves. They produce more requests (so a high availability becomes measurable), exercise more paths, and add concurrency and pressure on CPU, memory, and database connections, which exposes rare failures and bottlenecks. Availability stays stable or drops once the app reaches its capacity.
+
+The tool is `tests/availability/run.ts` with the numbers in `tests/availability/metrics.ts` (tested in `tests/unit/availability-metrics.test.ts`). It creates stamped students and deletes them, their sessions, and their My Courses entries at the end.
 
 ## Profile (US-04)
 
@@ -448,6 +563,15 @@ The levels live in one table, `EVENT_LEVELS` in `lib/logger.ts`, and TypeScript 
 | Sprint 3 | `question_correction_refused`, `question_correction_rate_limited` | warn | `courseId`, `questionId`, `kind`, `reason`, `userId`, `retryAfterSeconds` |
 | Sprint 3 | `question_correction_failed`, `question_correction_retrieval_failed` | error | `courseId`, `questionId`, `kind`, `userId`, `errorType` |
 | US-74 | `slow_operation` | warn | `operation`, `durationMs`, and the operation's IDs |
+| 2 (Sprint 3) | `question_grouping_completed` | info | `courseId`, `questionCount`, `groupCount`, `rewordedMatches`, `lowConfidenceMatches` |
+| 2 (Sprint 3) | `question_grouping_low_confidence` | warn | `courseId`, `questionId`, `matchedQuestionId`, `score` |
+| 2 (Sprint 3) | `question_report_submitted` | info | `reportId`, `courseId`, `groupId`, `category` (the reason), `userId` (never the note) |
+| 2 (Sprint 3) | `question_report_refused`, `question_report_rate_limited` | warn | `groupId`, `reason`, `userId`, `retryAfterSeconds` |
+| 2 (Sprint 3) | `question_report_failed`, `question_report_retrieval_failed` | error | `groupId`, `userId`, `errorType` |
+| 3 (Sprint 3) | `question_progress_saved` | info | `userId`, `courseId`, `groupId`, `operation` (`mark` or `undo`) |
+| 3 (Sprint 3) | `question_progress_refused`, `question_progress_rate_limited` | warn | `groupId`, `reason` (`invalid_choice`, `not_found`), `userId`, `retryAfterSeconds` |
+| 3 (Sprint 3) | `question_progress_failed`, `question_progress_retrieval_failed` | error | `userId`, `courseId`, `groupId`, `operation` (`mark` or `relink`), `errorType` |
+| 3 (Sprint 3) | `learning_profile_retrieval_failed`, `learning_profile_update_failed` | error | `userId`, `courseId`, `source` (`personal_order`), `errorType` (never a topic) |
 
 ### What is never logged
 

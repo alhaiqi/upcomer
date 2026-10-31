@@ -2,7 +2,11 @@ import { ExamType, FileCategory, type Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { PUBLISHED_FILES } from "@/lib/file-visibility";
 import { logError } from "@/lib/logger";
+
 import { groupCorrectedQuestions, normalizeQuestionText, rankGroups } from "@/lib/question-grouping";
+
+import { groupQuestions, LOW_CONFIDENCE_BELOW, normalizeQuestionText, rankGroups, type RankedGroup } from "@/lib/question-grouping";
+
 
 const errorType = (error: unknown) => (error instanceof Error ? error.name : "Unknown");
 
@@ -11,9 +15,31 @@ export const courseExams = (courseId: string): Prisma.CourseFileWhereInput => ({
 
 export type RebuildResult = { ok: true; groupCount: number; questionCount: number } | { ok: false; error: "not_found" | "unexpected" };
 
+
 // Regroups (US-15a) and re-ranks (US-16) every question of a course. Call it after questions are added, changed, or removed,
 // or after a paper moves to another course (for both courses). Groups whose key is unchanged keep their ID.
 // Admin corrections (pinned and split questions, see lib/question-corrections.ts) are applied on every rebuild, so they survive it.
+
+// At most this many low-confidence matches are logged one by one per rebuild; the summary line always has the full count.
+export const MAX_LOGGED_LOW_CONFIDENCE = 20;
+
+// Monitoring of the grouping decisions (US-15b): one summary line per rebuild, and one line per reworded match the
+// matcher was unsure about, so an admin can check those groups. Only IDs and scores are logged, never question text.
+function logGroupingDecisions(courseId: string, groups: RankedGroup[], questionCount: number) {
+  const reworded = groups.flatMap(group => group.reworded);
+  const unsure = reworded.filter(match => match.score < LOW_CONFIDENCE_BELOW);
+  logError("question_grouping_completed", {
+    courseId, questionCount: String(questionCount), groupCount: String(groups.length),
+    rewordedMatches: String(reworded.length), lowConfidenceMatches: String(unsure.length),
+  });
+  for (const match of unsure.slice(0, MAX_LOGGED_LOW_CONFIDENCE)) {
+    logError("question_grouping_low_confidence", { courseId, questionId: match.questionId, matchedQuestionId: match.matchedQuestionId, score: match.score.toFixed(2) });
+  }
+}
+
+// Regroups (US-15a, US-15b) and re-ranks (US-16) every question of a course. Call it after questions are added, changed, or
+// removed, or after a paper moves to another course (for both courses). Groups whose key is unchanged keep their ID.
+
 export async function rebuildQuestionBank(courseId: string): Promise<RebuildResult> {
   try {
     const course = await db.course.findUnique({ where: { id: courseId }, select: { id: true } });
@@ -21,14 +47,20 @@ export async function rebuildQuestionBank(courseId: string): Promise<RebuildResu
       logError("question_grouping_rejected", { courseId, reason: "course_not_found" });
       return { ok: false, error: "not_found" };
     }
-    return await db.$transaction(async tx => {
+    let decisions: RankedGroup[] = [];
+    const result = await db.$transaction(async tx => {
       // One rebuild per course at a time; a second one waits and then sees the first one's result.
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${courseId}))`;
       const questions = await tx.question.findMany({
         where: { file: courseExams(courseId) },
         select: { id: true, fileId: true, number: true, text: true, groupId: true, pinnedToQuestionId: true, splitOut: true, file: { select: { year: true } } },
       });
+
       const ranked = rankGroups(groupCorrectedQuestions(questions.map(({ id, fileId, number, text, pinnedToQuestionId, splitOut, file }) => ({ id, fileId, number, text, pinnedToQuestionId, splitOut, year: file.year }))));
+
+      const ranked = rankGroups(groupQuestions(questions.map(({ file, ...question }) => ({ ...question, year: file.year }))));
+      decisions = ranked;
+
       await tx.questionGroup.deleteMany({ where: { courseId, normalizedText: { notIn: ranked.map(group => group.normalizedText) } } });
       // Written in a few batched statements rather than one per group, so a large paper regroups quickly (US-14 cross-test).
       const existing = new Map((await tx.questionGroup.findMany({
@@ -63,6 +95,9 @@ export async function rebuildQuestionBank(courseId: string): Promise<RebuildResu
       if (ungrouped.length) await tx.question.updateMany({ where: { id: { in: ungrouped } }, data: { groupId: null } });
       return { ok: true as const, groupCount: ranked.length, questionCount: questions.length };
     }, { timeout: 30_000 });
+    // Logged only once the transaction committed, so the monitoring page never shows decisions that were rolled back.
+    logGroupingDecisions(courseId, decisions, result.questionCount);
+    return result;
   } catch (error) {
     logError("question_grouping_failed", { courseId, errorType: errorType(error) });
     return { ok: false, error: "unexpected" };

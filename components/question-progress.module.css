@@ -1,0 +1,4 @@
+/* Progress is good news, so it is a plain line with a mint check, not the orange-edged notice used for warnings. */
+.progress { margin: 1rem 0; color: var(--text); font-weight: 600; }
+.progress::before { content: "✓"; margin-right: .4rem; color: var(--success-text); }
+.progress a { margin-left: .25rem; }

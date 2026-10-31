@@ -53,7 +53,14 @@ model User {
   enrollments         UserCourse[]
   submissions         CourseFile[]         @relation("SubmittedFiles")
   passwordResetTokens PasswordResetToken[]
+
   questionCorrections QuestionCorrection[]
+
+  questionReports     QuestionReport[]     @relation("ReportedQuestions")
+  closedReports       QuestionReport[]     @relation("ClosedQuestionReports")
+  learningTopics      LearningTopic[]
+  questionProgress    QuestionProgress[]
+
   createdAt           DateTime             @default(now())
   updatedAt           DateTime             @updatedAt
 
@@ -100,6 +107,7 @@ model UserCourse {
 }
 
 model Course {
+
   id             String               @id @default(cuid())
   code           String               @unique
   name           String
@@ -112,6 +120,22 @@ model Course {
   corrections    QuestionCorrection[]
   createdAt      DateTime             @default(now())
   updatedAt      DateTime             @updatedAt
+
+  id               String             @id @default(cuid())
+  code             String             @unique
+  name             String
+  facultyId        String
+  faculty          Faculty            @relation(fields: [facultyId], references: [id])
+  professors       CourseProfessor[]
+  files            CourseFile[]
+  enrollments      UserCourse[]
+  questionGroups   QuestionGroup[]
+  questionReports  QuestionReport[]
+  learningTopics   LearningTopic[]
+  questionProgress QuestionProgress[]
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+
 }
 
 model CourseProfessor {
@@ -281,9 +305,9 @@ model QuestionCorrection {
 // Identical and near-identical questions of one course (US-15a), ranked by how many papers they appeared in (US-16).
 // Rebuilt by rebuildQuestionBank in lib/question-bank.ts; the papers are the files of its questions.
 model QuestionGroup {
-  id             String     @id @default(cuid())
+  id             String             @id @default(cuid())
   courseId       String
-  course         Course     @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  course         Course             @relation(fields: [courseId], references: [id], onDelete: Cascade)
   // The question as shown to students: the first source question, without its number or marks.
   text           String
   // Grouping key; unique per course, so a rebuild keeps each group's ID.
@@ -293,9 +317,102 @@ model QuestionGroup {
   // 1 is the most frequent question in the course.
   rank           Int
   questions      Question[]
-  createdAt      DateTime   @default(now())
-  updatedAt      DateTime   @updatedAt
+  reports        QuestionReport[]
+  progress       QuestionProgress[]
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
 
   @@unique([courseId, normalizedText])
   @@index([courseId, rank])
+}
+
+// What a student says is wrong with a question on the Upcomer Exam (US-23).
+enum QuestionReportReason {
+  // Different questions shown as one, or one question shown twice.
+  WRONG_GROUPING
+  // The text is wrong, cut off, or garbled.
+  WRONG_TEXT
+  NOT_A_QUESTION
+  OTHER
+}
+
+// OPEN reports are the admin queue at /admin/reports. Closing one (US-75) sets closedAt and closedById.
+enum QuestionReportStatus {
+  OPEN
+  RESOLVED
+  DISMISSED
+}
+
+// One student's report of one question (US-23). The admin queue shows the open reports of a question as one item, and a
+// student cannot open a second report of a question while their first is open; see lib/question-reports.ts.
+model QuestionReport {
+  id           String               @id @default(cuid())
+  courseId     String
+  course       Course               @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  // Null once a regroup removed the group; questionText still says what was reported.
+  groupId      String?
+  group        QuestionGroup?       @relation(fields: [groupId], references: [id], onDelete: SetNull)
+  // Null if the student's account was deleted.
+  reporterId   String?
+  reporter     User?                @relation("ReportedQuestions", fields: [reporterId], references: [id], onDelete: SetNull)
+  // The question as the student saw it when reporting.
+  questionText String
+  reason       QuestionReportReason
+  // Optional details from the student, at most 500 characters; shown to admins, never logged.
+  note         String?
+  status       QuestionReportStatus @default(OPEN)
+  closedAt     DateTime?
+  closedById   String?
+  closedBy     User?                @relation("ClosedQuestionReports", fields: [closedById], references: [id], onDelete: SetNull)
+  createdAt    DateTime             @default(now())
+  updatedAt    DateTime             @updatedAt
+
+  @@index([status, createdAt])
+  @@index([groupId, status])
+  @@index([reporterId])
+  @@index([courseId])
+}
+
+// One topic of one student's learning profile in one course (US-33). The course is part of the key, so a change in one
+// course never changes another's profile, and two courses with a topic of the same name track it separately.
+// See lib/learning-profile.ts.
+model LearningTopic {
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  courseId  String
+  course    Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  // The topic trimmed, with spacing collapsed and in lower case, so "TCP" and " tcp" are one topic within a course.
+  topicKey  String
+  // The topic as first written, for display.
+  topic     String
+  // How weak the student is in the topic, from 0 (strong) to 1 (weak). Written with setTopicWeakness; how it is worked out
+  // (self-rating, US-24; performance, US-25) belongs to those stories.
+  weakness  Float
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@id([userId, courseId, topicKey])
+  @@index([courseId])
+}
+
+// One question a student marked done on the Upcomer Exam (US-21). Only the student who marked it ever sees it.
+// A regroup can replace a question's group with a new one (its first question changed). The mark is then kept with a
+// null groupId and re-linked, within the same course only, to the group that now holds its questions; see
+// lib/question-progress.ts.
+model QuestionProgress {
+  id                String         @id @default(cuid())
+  userId            String
+  user              User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  courseId          String
+  course            Course         @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  // Null while a regroup has replaced the group and the mark is not re-linked yet.
+  groupId           String?
+  group             QuestionGroup? @relation(fields: [groupId], references: [id], onDelete: SetNull)
+  // The group's source questions when it was marked, its first question first; used to re-link the mark after a regroup.
+  sourceQuestionIds String[]
+  doneAt            DateTime       @default(now())
+
+  @@unique([userId, groupId])
+  @@index([userId, courseId])
+  @@index([groupId])
 }

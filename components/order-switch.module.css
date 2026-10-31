@@ -1,0 +1,4 @@
+.switch { display: inline-flex; flex-wrap: wrap; gap: .25rem; margin: .5rem 0 0; border: 1px solid var(--border); border-radius: var(--radius-small); background: var(--surface); padding: .2rem; }
+.switch a { border-radius: calc(var(--radius-small) - 2px); padding: .3rem .75rem; color: var(--muted); font-size: .9rem; font-weight: 600; text-decoration: none; }
+.switch a:hover { color: var(--link); }
+.switch a[aria-current="page"] { background: var(--tint); color: var(--link); }
