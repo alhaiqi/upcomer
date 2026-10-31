@@ -11,6 +11,7 @@ vi.mock("@/lib/question-reports", () => ({ getReportQueue: mocks.getReportQueue 
 vi.mock("@/lib/question-report-actions", () => ({ reportQuestionAction: vi.fn() }));
 vi.mock("@/lib/courses", () => ({ getCourseById: mocks.getCourseById }));
 vi.mock("@/lib/consolidated-exam", () => ({ getConsolidatedExam: mocks.getConsolidatedExam }));
+vi.mock("@/lib/question-progress", () => ({ getCourseProgress: vi.fn().mockResolvedValue(new Map()) }));
 import QuestionReportsPage from "@/app/admin/reports/page";
 import ConsolidatedExamPage from "@/app/courses/[courseId]/exam/page";
 

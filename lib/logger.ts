@@ -59,7 +59,14 @@ type LogEvent =
   | "question_report_refused"
   | "question_report_rate_limited"
   | "question_report_failed"
-  | "question_report_retrieval_failed";
+  | "question_report_retrieval_failed"
+  | "learning_profile_retrieval_failed"
+  | "learning_profile_update_failed"
+  | "question_progress_failed"
+  | "question_progress_retrieval_failed"
+  | "question_progress_saved"
+  | "question_progress_refused"
+  | "question_progress_rate_limited";
 
 export type { LogEvent };
 export type LogLevel = "error" | "warn" | "info";
@@ -141,6 +148,15 @@ export const EVENT_LEVELS: Record<LogEvent, LogLevel> = {
   question_report_rate_limited: "warn",
   question_report_failed: "error",
   question_report_retrieval_failed: "error",
+  // Member 3 (Sprint 3): learning profile kept per course (US-33). Topics are never logged.
+  learning_profile_retrieval_failed: "error",
+  learning_profile_update_failed: "error",
+  // Member 3 (Sprint 3): questions marked done (US-21). Only IDs, operations, and reasons are logged.
+  question_progress_failed: "error",
+  question_progress_retrieval_failed: "error",
+  question_progress_saved: "info",
+  question_progress_refused: "warn",
+  question_progress_rate_limited: "warn",
 };
 
 // A refusal event that was caused by the database failing is a real failure, so it is raised to error.

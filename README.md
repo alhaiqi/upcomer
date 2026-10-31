@@ -40,7 +40,7 @@ The seed is repeatable and includes one record for a deliberately missing physic
 | `/courses/:courseId` | Course home |
 | `/courses/:courseId/exams` | Exams for that course |
 | `/courses/:courseId/materials` | Materials for that course |
-| `/courses/:courseId/exam` | The Upcomer Exam: every distinct question once, most likely first. Logged-in students can report a question under it; optional `reported` and `report_error` query parameters |
+| `/courses/:courseId/exam` | The Upcomer Exam: every distinct question once, most likely first. Logged-in students can report a question under it, mark questions done and continue where they stopped (US-21), and switch to their personal order (US-28); optional `reported`, `report_error`, `progress_error`, `at`, and `order=personal` query parameters |
 | `/courses/:courseId/questions` | The course's question bank, most frequent first; optional `q`, `year`, `termId`, `examType`, and `professorId` query parameters |
 | `/files/:fileId` | Original bytes for a stored file record |
 | `/admin/uploads` | Admin upload menu |
@@ -256,6 +256,46 @@ US-15b (group reworded equivalent questions) and US-23 (report a wrong question)
 - **Monitoring.** `question_report_submitted` (info), `question_report_refused` and `question_report_rate_limited` (warn), and `question_report_failed` and `question_report_retrieval_failed` (error). They carry IDs, the reason, and error types. The note is never logged.
 
 Tests: `tests/unit/question-grouping.test.ts`, `tests/unit/question-bank.test.ts`, `tests/unit/question-reports.test.ts`, `tests/unit/question-report-pages.test.tsx`, and `tests/e2e/question-reports.spec.ts`. Shared files changed: `prisma/schema.prisma`, `lib/logger.ts`, `lib/submission-review.ts` (exports `readable`), `components/consolidated-exam.tsx` and `app/courses/[courseId]/exam/page.tsx` (the report form and notices), `tests/unit/consolidated-exam-page.test.tsx` (mocks the session), `app/admin/catalog/page.tsx` (Question reports card), and `.env.example`.
+
+## Study progress and the personal order (Member 3, Sprint 3)
+
+US-21 (mark questions done and resume), US-33 (learning profile kept per course), and US-28 (personal ordering of the Upcomer Exam). US-24, US-25, and US-27 (Mustafa Ergaibi and unassigned) are **not** implemented here; see "Placeholders" below.
+
+After pulling, run `npx prisma generate` and `npm run db:migrate`. Two migrations are new: `20261027000000_learning_profile` and `20261028000000_question_progress`.
+
+### Mark done and resume (US-21)
+
+- **Table** `QuestionProgress`: one row per question a student marked done. It holds `userId`, `courseId`, `groupId`, `sourceQuestionIds` (the group's questions when it was marked, its first question first), and `doneAt`. A student can mark a question once (unique on `userId` and `groupId`).
+- **On the exam.** Each question has a **Mark done** button, and a done question shows "✓ Done" with **Undo**. Above the questions, "N of M questions done. Continue at question K" names the first question not done, in the order shown. Opening the exam scrolls there; marking or undoing a question scrolls back to it (`?at=N`, because Next.js drops a redirect's `#question-N` after a server action). Without JavaScript, the link and the `#question-N` do the same. Visitors see neither.
+- **Whose progress.** `markQuestionAction` calls `requireUser()` first and never reads a user ID from the form; every read is filtered by the session user, so one student never sees another's progress. Only questions from a course's published exam papers can be marked. Marks per student per minute are limited by `QUESTION_PROGRESS_RATE_LIMIT_PER_MINUTE` (default 60); one student's clicks are serialized with a lock.
+- **After a regroup.** A regroup that changes a group's first question replaces the group. Its marks are kept (`groupId` is set to null) and re-linked, in the same course only, to the group that now holds the marked question, or else most of its other questions. A mark whose questions are all gone stays hidden rather than attached to a guess.
+- **Marking does not change the learning profile.**
+
+### Learning profile kept per course (US-33)
+
+- **Table** `LearningTopic`: one row per student, course, and topic (primary key `userId`, `courseId`, `topicKey`), holding `weakness`, from 0 (strong) to 1 (weak). The course is part of the key, so a change in one course never changes another, and two courses with a topic of the same name keep separate rows. `topicKey` ignores case and spacing.
+- **A question's topic** is its exam papers' `CourseFile.topic` (set on upload or at `/admin/files`); when they disagree, the most common, then the newest paper's.
+- **Writing it.** `setTopicWeakness(userId, courseId, topic, weakness)` in `lib/learning-profile.ts` is the one write path, for US-24 and US-25 to call. `getLearningProfile(userId, courseId)` reads one course.
+
+### Personal order (US-28)
+
+- Logged-in students get a **Frequency order / Personal order** switch. `?order=personal` shows one list, "Your order", sorted by `personalPriority` for each question; ties keep the frequency order. Each question keeps its number, tier badge, mark form, and report form. **Frequency order** (the address without `?order=personal`) restores the stored ranking.
+- A student with no profile rows in the course sees the frequency order with "You have no learning profile for this course yet, so this is the frequency order." Visitors always get the frequency order.
+
+### Placeholders for other stories
+
+Both are in `lib/personal-order.ts`, marked `PLACEHOLDER`:
+- **`personalPriority(paperCount, totalPapers, weakness)`**, for US-27: `share of papers × (0.5 + weakness)`. Replace this one function.
+- **`NEUTRAL_WEAKNESS = 0.5`**, for US-24's neutral default: the weakness of a question with no topic, or a topic without a score.
+
+### Known limitations
+
+- **Nothing writes `weakness` yet.** Until US-24 or US-25 exists, every real student's profile is empty, so the personal order shows the frequency order with the "no learning profile" note. The tests write profiles with `setTopicWeakness`, and US-33's "practice" is simulated the same way.
+- **A report sent from the personal order returns to the frequency order**, because the report action (US-23) does not keep `order=personal`. Questions keep their numbers, so its notice and `#question-N` still point at the right question.
+
+Monitoring: see the events table (`question_progress_*`, `learning_profile_*`). Topics are never logged.
+
+Tests: `tests/unit/learning-profile.test.ts`, `tests/unit/question-progress.test.ts`, `tests/unit/personal-order.test.ts`, `tests/unit/study-progress-pages.test.tsx`, `tests/unit/personal-order-pages.test.tsx`, `tests/integration/learning-profile.test.ts`, `tests/integration/question-progress.test.ts`, `tests/integration/personal-order.test.ts`, `tests/e2e/study-progress.spec.ts`, and `tests/e2e/personal-order.spec.ts`. They create their own courses and students and delete them. Shared files changed: `prisma/schema.prisma`, `lib/logger.ts`, `components/consolidated-exam.tsx`, `app/courses/[courseId]/exam/page.tsx`, `tests/unit/question-report-pages.test.tsx` (one mock line), `README.md`, and `.env.example`; the exact lines are in `MEMBER_3_SPRINT_3_IMPLEMENTATION_REPORT.md`.
 
 ## Submissions (US-13)
 
@@ -479,6 +519,10 @@ The levels live in one table, `EVENT_LEVELS` in `lib/logger.ts`, and TypeScript 
 | 2 (Sprint 3) | `question_report_submitted` | info | `reportId`, `courseId`, `groupId`, `category` (the reason), `userId` (never the note) |
 | 2 (Sprint 3) | `question_report_refused`, `question_report_rate_limited` | warn | `groupId`, `reason`, `userId`, `retryAfterSeconds` |
 | 2 (Sprint 3) | `question_report_failed`, `question_report_retrieval_failed` | error | `groupId`, `userId`, `errorType` |
+| 3 (Sprint 3) | `question_progress_saved` | info | `userId`, `courseId`, `groupId`, `operation` (`mark` or `undo`) |
+| 3 (Sprint 3) | `question_progress_refused`, `question_progress_rate_limited` | warn | `groupId`, `reason` (`invalid_choice`, `not_found`), `userId`, `retryAfterSeconds` |
+| 3 (Sprint 3) | `question_progress_failed`, `question_progress_retrieval_failed` | error | `userId`, `courseId`, `groupId`, `operation` (`mark` or `relink`), `errorType` |
+| 3 (Sprint 3) | `learning_profile_retrieval_failed`, `learning_profile_update_failed` | error | `userId`, `courseId`, `source` (`personal_order`), `errorType` (never a topic) |
 
 ### What is never logged
 

@@ -1,0 +1,8 @@
+.mark { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; margin-top: .75rem; }
+/* A light outlined button, so marking done never outweighs the question itself. */
+.button { border: 1px solid var(--primary); border-radius: var(--radius-small); background: var(--surface); color: var(--link); padding: .3rem .8rem; font: inherit; font-size: .9rem; font-weight: 600; cursor: pointer; transition: background-color var(--ease); }
+.button:hover { background: var(--tint); }
+.done { color: var(--success-text); font-weight: 600; }
+.undo { border: 0; background: none; padding: 0; color: var(--muted); font: inherit; font-size: .95rem; text-decoration: underline; cursor: pointer; }
+.undo:hover { color: var(--link); }
+@media (prefers-reduced-motion: reduce) { .button { transition: none; } }
