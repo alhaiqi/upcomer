@@ -1,6 +1,52 @@
 # Upcomer
 
-Upcomer is a university study platform organized around courses. This Sprint 1 slice lets a student create an account, log in, discover a course, add it to My Courses, open the course, browse its previous exams and materials, and view original uploaded files. Uploads and admin screens belong to other team members.
+## Ali Slim - Sprint 4
+
+US-25, US-29, US-44 and US-73 are implemented on `ali_slim_sprint_4`, based on `origin/main` at `8473b83`.
+
+After pulling: `npx prisma generate`, then apply reviewed migrations with `npx prisma migrate deploy` to the intended database. Migration `20261115000000_practice_evidence` adds evidence counters, `LearningEvent`, and `GeneratedPracticeQuestion`. This branch's verification uses a disposable local database, not the team's shared database.
+
+| Route | Behavior |
+| --- | --- |
+| `/courses/:courseId/practice` | Authenticated question-bank practice; self-report correct/incorrect and inspect actual priority reasons; 20 questions per page |
+| `/courses/:courseId/practice/generated` | Generate 1-10 private, course-grounded reasoning tasks; choose topic/difficulty; browse the saved library |
+| `/courses/:courseId/exam?order=personal` | Existing personal order, now with **Why this priority?** beneath each ranked question |
+| `/admin/files/:id/manage` | Admin-only replace/remove forms, reachable from Edit File Details |
+| `POST /api/admin/files/:fileId` | Admin-only multipart replacement or confirmed removal with optimistic version checking and origin validation |
+
+### Performance evidence and priority explanations
+
+- A completion mark still means only **done**. Correct/incorrect outcomes are a separate action and are clearly labeled self-reported, not automatically graded.
+- `recordLearningEvents(userId, courseId, events)` in `lib/learning-evidence.ts` is the trusted server input contract. Each event has `{ eventId, source, correct, questionId? | generatedQuestionId?, topic? }`. Producers supply a stable event ID; session/attempt ownership supplies `userId`. Browser actions accept only question-bank outcomes and ignore submitted user IDs and source names.
+- A unique `(userId, source, eventId)` and course-profile lock prevent duplicate updates. Replaying the same event is a no-op; changed course, target or outcome is a conflict. A batch either commits all events and profile changes or none.
+- Question topics come from the course's published source papers using the same majority/tie rule as personal ordering. Untagged questions cannot claim topic mastery. Deleted or private sources cannot create new evidence. Historical evidence survives removal and idempotent replays remain safe.
+- With baseline weakness `b`, correct count `c`, and incorrect count `i`, `weakness = (2*b + i) / (2+c+i)`. The baseline is saved confidence, an existing pre-performance weakness, or neutral 0.5. Confidence changes recalculate the same rule without discarding outcomes. Skip removes the rating prior when applicable; it does not erase performance or assert mastery.
+- `getLearningProfile` exposes optional `confidence`, `baselineWeakness`, `correctCount`, and `incorrectCount` alongside the existing fields for US-26/30/31/47. These are heuristic evidence counts, not calibrated mastery probabilities.
+- US-29 uses the actual `checkedPriority` function: exam-paper share times `(1 + 2*weakness)`. Reasons name saved confidence, recorded correct/incorrect counts, the prior and actual score; unknown evidence and invalid inputs are explicit. Historical frequency is not a guarantee of future exams.
+- US-49 calls `recordMockOutcomes(userId, courseId, attemptId, [{ itemId, generatedQuestionId, correct }])` **after** validating ownership and committing rubric-backed grading. This adapter is tested with stored generated items; the real US-49 grading/session integration is not present on this branch. FLASHCARD and AI_INTERACTION are future E5 producer contracts, not released features. Full original US-25 acceptance remains partial until those integrations exist.
+
+### New practice questions (US-44)
+
+- `generatePracticeQuestions(userId, courseId, { count, difficulty, topicKey? })` generates and persists an exact batch or returns a controlled refusal. It reads only published exam questions in that course, requires a tagged topic and a usable source, and respects EASY/MEDIUM/HARD requested reasoning depth.
+- The offline generator produces **new reasoning tasks around the original paper context**, not numerical substitutions or invented solutions. It needs no model key. Easy tasks identify concepts/assumptions, medium tasks plan/check solutions, hard tasks compare/generalize reasoning. Difficulty is instructional intent, not a calibrated assessment. Sources are copied as context and linked for review.
+- There are three task variants per source/difficulty. Normalized content hashes prevent exact repeats of historical questions or the student's existing generated tasks. Exhaustion is explicit; no smaller batch is silently returned. Libraries are private to a student/course.
+- Persisted items include stable IDs, topic/difficulty, generator version, source-question relation, source fingerprint, prompt, content hash, and nullable rubric. Source removal/replacement cascades generated items; correction or retagging excludes stale items from eligibility. Generation never changes historical question groups or frequencies.
+- US-45/46/47 should use `getGeneratedPracticeQuestions(userId, courseId, settings?)` to enforce source validity and library privacy, then persist selected item IDs in their own mock-session schema. This branch does not implement another member's session, timer or grading stories. `rubric` is null because source exams have no verified keys; US-49 must flag that limitation instead of inventing a grade.
+
+### File replacement/removal (US-73)
+
+- Replacement keeps the file ID, course, review status, title and metadata. PDFs are validated and extracted before mutation; unreadable/scanned/question-less replacements leave original data intact. Materials retain the existing supported upload formats and size limits.
+- New bytes are staged under an exclusive UUID path inside verified canonical storage. Under the course and processing locks, the service checks the displayed version and active processing, then replaces/deletes questions and regroups in the **same transaction**. A grouping failure rolls back all database changes and removes staged bytes.
+- Removal requires confirmation and updates ranks/source links atomically. Generated items derived from deleted questions disappear; historical outcome/correction/report snapshots remain. Recent running processing attempts are refused. Racing/stale forms cannot overwrite a newer file.
+- Old physical bytes are removed after commit only if no other record references them. Failed cleanup is logged as an error and shown to the admin; source records and rankings already reflect the committed mutation. Existing filesystem containment checks remain enforced. Original-file responses use `private, no-store` so replacements do not reuse stale cached bytes.
+
+### Monitoring and verification
+
+New privacy-safe events: `learning_evidence_saved/failed/refused`, `practice_generation_completed/failed/refused`, and `file_management_completed/failed/refused/cleanup_failed`. They contain IDs, counts, reason codes and error types only. Existing priority input failures use `priority_calculation_failed`. `.env.example` documents per-minute limits for practice, generation and file management.
+
+Tests: `tests/unit/sprint4-practice-rules.test.ts`, `tests/unit/sprint4-actions.test.ts`, `tests/integration/sprint4-ali-slim.test.ts`, and `tests/e2e/ali-slim-sprint4.spec.ts`, plus the existing regression suites. The integration suite includes fixed-seed valid/invalid trials and real concurrency/rollback checks. Browser tests exercise actual forms, persisted monitoring, private libraries, admin mutations and mobile layout. `MEMBER_5_SPRINT_4_IMPLEMENTATION_REPORT.md` records final results and integration boundaries; `CROSS_TEST_ALI_SLIM_SPRINT_4.md` records the assigned advice cross-tests and unavailable US-45 acceptance.
+
+Upcomer is a university study platform organized around courses. Students discover courses, browse exams and materials, use a grouped question bank, track progress and confidence, and record practice outcomes. Admin tools manage uploads, review submissions, correct questions, monitor failures, and replace or remove source files.
 
 ## Stack and requirements
 
@@ -267,7 +313,7 @@ Tests: `tests/unit/question-grouping.test.ts`, `tests/unit/question-bank.test.ts
 
 ## Study progress and the personal order (Member 3, Sprint 3)
 
-US-21 (mark questions done and resume), US-33 (learning profile kept per course), and US-28 (personal ordering of the Upcomer Exam). US-24, US-25, and US-27 (Mustafa Ergaibi and unassigned) are **not** implemented here; see "Placeholders" below.
+US-21 (mark questions done and resume), US-33 (learning profile kept per course), and US-28 (personal ordering of the Upcomer Exam). US-24 and US-27 provide confidence and priorities; Sprint 4 US-25 adds performance evidence and US-29 adds explanations (see the Sprint 4 section below).
 
 After pulling, run `npx prisma generate` and `npm run db:migrate`. Two migrations are new: `20261027000000_learning_profile` and `20261028000000_question_progress`.
 
@@ -283,7 +329,7 @@ After pulling, run `npx prisma generate` and `npm run db:migrate`. Two migration
 
 - **Table** `LearningTopic`: one row per student, course, and topic (primary key `userId`, `courseId`, `topicKey`), holding `weakness`, from 0 (strong) to 1 (weak). The course is part of the key, so a change in one course never changes another, and two courses with a topic of the same name keep separate rows. `topicKey` ignores case and spacing.
 - **A question's topic** is its exam papers' `CourseFile.topic` (set on upload or at `/admin/files`); when they disagree, the most common, then the newest paper's.
-- **Writing it.** `setTopicWeakness(userId, courseId, topic, weakness)` in `lib/learning-profile.ts` is the one write path, for US-24 and US-25 to call. `getLearningProfile(userId, courseId)` reads one course.
+- **Writing it.** `setTopicWeakness` serves confidence saves; `recordLearningEvents` in `lib/learning-evidence.ts` atomically saves performance events, counts, and combined weakness. `getLearningProfile(userId, courseId)` reads one course.
 
 ### Personal order (US-28)
 
@@ -308,7 +354,7 @@ After pulling, run `npx prisma generate` and `npm run db:migrate`. Two migration
 
 ### Known limitations
 
-- **Only self-ratings write `weakness` so far.** Students set it at `/courses/:courseId/confidence` (US-24); performance (US-25) doesn't exist yet. Until a student rates a course's topics, the personal order shows the frequency order with the "no learning profile" note.
+- **Confidence and recorded practice both update weakness.** Without either, the personal order retains frequency order and identifies the missing profile. Full mock/E5 integration still requires those producers; see the Sprint 4 contract.
 - **A report sent from the personal order returns to the frequency order**, because the report action (US-23) does not keep `order=personal`. Questions keep their numbers, so its notice and `#question-N` still point at the right question.
 
 Monitoring: see the events table (`question_progress_*`, `learning_profile_*`, `priority_calculation_failed`, `topic_confidence_*`). Topics are never logged.
