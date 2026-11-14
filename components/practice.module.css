@@ -1,0 +1,5 @@
+.choices { display: flex; flex-wrap: wrap; gap: .75rem 1.5rem; border: 1px solid var(--border); border-radius: 8px; padding: .75rem 1rem; min-width: 0; }
+.choices label { display: flex; align-items: center; gap: .5rem; font-weight: 400; }
+.choices input[type="radio"], .confirmation input[type="checkbox"] { width: 1.1rem; min-height: 1.1rem; height: 1.1rem; padding: 0; flex-shrink: 0; }
+.confirmation label { display: flex; align-items: center; gap: .6rem; }
+.prompt { white-space: pre-wrap; overflow-wrap: anywhere; }

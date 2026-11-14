@@ -22,7 +22,7 @@ describe("unpublished submissions (US-13)", () => {
     getOriginalFile.mockResolvedValue({ record: { originalFileName: "exam.pdf", mimeType: "application/pdf", status: "PUBLISHED" }, bytes: Buffer.from("%PDF-") });
     const response = await GET(new Request("http://localhost/files/file-a"), context);
     expect(getOriginalFile).toHaveBeenCalledWith("file-a", viewer);
-    expect(response.headers.get("cache-control")).toBeNull();
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
   });
   it("keeps an unpublished file out of shared caches", async () => {
     getOriginalFile.mockResolvedValue({ record: { originalFileName: "exam.pdf", mimeType: "application/pdf", status: "PENDING" }, bytes: Buffer.from("%PDF-") });

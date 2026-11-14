@@ -1,8 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { AdviceStatus, FileCategory, FileStatus } from "@prisma/client";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { getAdviceOptions, publishAdvice, searchAdvice, type PublishInput } from "@/lib/advice";
 import { db } from "@/lib/db";
+import { resetRateLimits } from "@/lib/rate-limit";
+
+beforeEach(() => resetRateLimits());
 
 // Advice (US-34, US-35, US-37, US-39) against a real, migrated database. Every record is created here with a unique suffix
 // and deleted in afterAll, so the test can run next to other data. The services take the user ID directly, so no session is needed.
@@ -119,9 +122,10 @@ describe("US-37: anonymous advice", () => {
       await searchAdvice(ids.courseA, ids.reader, { topic: "tcp basics", termId: ids.term }),
     ];
     for (const view of views) {
-      const json = JSON.stringify(view);
-      expect(json).not.toContain(`Secret Author ${run}`);
-      expect(json).not.toContain(ids.author);
+      // Named posts by the same author legitimately coexist in the feed. Inspect anonymous payloads for name leaks,
+      // and every payload for raw author IDs; neither check depends on earlier test posts being absent.
+      expect(JSON.stringify(view.items.filter(item => item.isAnonymous))).not.toContain(`Secret Author ${run}`);
+      expect(JSON.stringify(view)).not.toContain(ids.author);
     }
     const found = views[1].items.find(item => item.id === id);
     expect(found).toMatchObject({ authorLabel: "Anonymous student", isAnonymous: true, isMine: false });

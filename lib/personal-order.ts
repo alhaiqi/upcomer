@@ -1,7 +1,7 @@
 import { db } from "@/lib/db";
 import { PUBLISHED_FILES } from "@/lib/file-visibility";
 import type { ExamQuestion } from "@/lib/consolidated-exam";
-import { getLearningProfile, isWeakness, NEUTRAL_WEAKNESS, questionTopic, type LearningProfile } from "@/lib/learning-profile";
+import { getLearningProfile, isWeakness, NEUTRAL_WEAKNESS, questionTopic, type LearningProfile, type ProfileTopic } from "@/lib/learning-profile";
 import { logError } from "@/lib/logger";
 
 // The personal order of the Upcomer Exam (US-28): the same questions, reordered by the student's priorities, so their
@@ -55,6 +55,21 @@ export function personalPriority(paperCount: number, totalPapers: number, weakne
   return checkedPriority(paperCount, totalPapers, weakness).priority;
 }
 
+// US-29 shares checkedPriority with the actual sorting path. It never infers confidence or mastery from completion.
+export function explainPriority(question: Pick<ExamQuestion, "paperCount" | "totalPapers">, topic: string | null, profile?: ProfileTopic): string {
+  const weakness = profile?.weakness ?? NEUTRAL_WEAKNESS;
+  const checked = checkedPriority(question.paperCount, question.totalPapers, weakness);
+  if (checked.reasons.length) return "Some priority inputs are invalid. This order uses safe defaults; no mastery is inferred.";
+  const frequency = `Appeared in ${question.paperCount} of ${question.totalPapers} published exam papers`;
+  const confidence = profile?.confidence == null ? "No saved confidence rating" : `Saved confidence: ${profile.confidence} of 5`;
+  const correct = profile?.correctCount ?? 0;
+  const incorrect = profile?.incorrectCount ?? 0;
+  const performance = correct + incorrect ? `${correct} correct and ${incorrect} incorrect recorded outcomes` : "No recorded performance evidence";
+  const baseline = profile?.baselineWeakness ?? profile?.weakness ?? NEUTRAL_WEAKNESS;
+  const evidence = correct + incorrect ? `Weakness combines two prior observations (${baseline.toFixed(2)}) with those outcomes` : profile ? "Weakness uses the saved course profile" : "Neutral weakness is used; your strength is unknown";
+  return `${topic ? `Topic: ${topic}. ` : "No topic assigned. "}${frequency}. ${confidence}. ${performance}. ${evidence}. Priority = exam share × (1 + ${WEAKNESS_WEIGHT} × weakness ${weakness.toFixed(2)}) = ${checked.priority.toFixed(3)}. Higher scores come first; ties retain frequency order. Historical frequency is not a guarantee of future exams.`;
+}
+
 export type PersonalOrder = { questions: ExamQuestion[]; hasProfile: boolean };
 
 // Two priorities this close are equal; the frequency order decides between them.
@@ -81,7 +96,7 @@ export function personalizeQuestions(
     const checked = checkedPriority(question.paperCount, question.totalPapers, weakness);
     if (checked.reasons.length) affected++;
     checked.reasons.forEach(reason => reasons.add(reason));
-    return { question, priority: checked.priority };
+    return { question: { ...question, priorityExplanation: explainPriority(question, topic?.topic ?? null, topic ? profile.get(topic.topicKey) : undefined) }, priority: checked.priority };
   });
   if (affected) {
     logError("priority_calculation_failed", { userId: context?.userId, courseId: context?.courseId, affectedQuestions: String(affected), reasons: [...reasons].sort().join(",") });

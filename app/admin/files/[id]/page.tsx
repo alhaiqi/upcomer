@@ -18,6 +18,7 @@ export default async function EditFilePage({ params, searchParams }: { params: P
     <span className="eyebrow">Admin · {file.category === "EXAM" ? "Exam" : "Material"}</span><h1>Edit File Details</h1>
     <p className="muted">{file.title} <a href={`/files/${encodeURIComponent(file.id)}`} target="_blank" rel="noopener noreferrer">Open Original File</a></p>
     <FileMetadataNotice {...notice} />
+    <p><Link href={`/admin/files/${encodeURIComponent(file.id)}/manage`}>Replace or remove file</Link></p>
     <form className="card form" action={saveFileMetadataAction}>
       <input type="hidden" name="id" value={file.id} />
       <FileMetadataFields category={file.category} courses={courses} terms={terms} file={file} />

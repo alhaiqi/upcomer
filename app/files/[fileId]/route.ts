@@ -65,7 +65,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ fil
         "Content-Length": String(bytes.length),
         "X-Content-Type-Options": "nosniff",
         // Only its submitter and admins can open an unpublished file, so no shared cache may keep it.
-        ...(record.status !== "PUBLISHED" && { "Cache-Control": "private, no-store" }),
+        "Cache-Control": "private, no-store",
       },
     });
   } catch (error) {

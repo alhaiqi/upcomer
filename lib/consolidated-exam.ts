@@ -11,6 +11,8 @@ import { cleanQuestionText } from "@/lib/question-grouping";
 
 export type ExamPaper = QuestionBankGroup["papers"][number];
 export type ExamQuestion = {
+  // US-29: populated only in the authenticated personal order.
+  priorityExplanation?: string;
   id: string;
   // 1..N down the whole exam, in ranking order.
   position: number;

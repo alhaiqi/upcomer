@@ -5,11 +5,11 @@ import { logError } from "@/lib/logger";
 // The learning profile of a student, kept per course (US-33). Each row is one topic of one student in one course, keyed
 // by (userId, courseId, topicKey), so a change in one course never changes another course's profile, and two courses that
 // share a topic name track it separately. A row holds one number, the student's weakness in the topic.
-// How weakness is worked out is not decided here: self-rating is US-24 and performance is US-25. They write it with
-// setTopicWeakness. Nothing here checks the caller: actions and pages call requireUser() first and pass the session
+// Self-rating (US-24) and performance (US-25) share a course lock and combine evidence; see learning-evidence.ts.
+// Nothing here checks the caller: actions and pages call requireUser() first and pass the session
 // user's ID.
 
-export type ProfileTopic = { topicKey: string; topic: string; weakness: number };
+export type ProfileTopic = { topicKey: string; topic: string; weakness: number; confidence?: number | null; baselineWeakness?: number | null; correctCount?: number; incorrectCount?: number };
 // A course's profile for one student, by topic key.
 export type LearningProfile = Map<string, ProfileTopic>;
 
@@ -48,7 +48,7 @@ export const NEUTRAL_WEAKNESS = 0.5;
 // The student's profile in one course. Only that course's rows are read.
 export async function getLearningProfile(userId: string, courseId: string): Promise<LearningProfile> {
   try {
-    const rows = await db.learningTopic.findMany({ where: { userId, courseId }, select: { topicKey: true, topic: true, weakness: true } });
+    const rows = await db.learningTopic.findMany({ where: { userId, courseId }, select: { topicKey: true, topic: true, weakness: true, confidence: true, baselineWeakness: true, correctCount: true, incorrectCount: true } });
     return new Map(rows.map(row => [row.topicKey, row]));
   } catch (error) {
     logError("learning_profile_retrieval_failed", { userId, courseId, errorType: errorType(error) });
@@ -58,23 +58,24 @@ export async function getLearningProfile(userId: string, courseId: string): Prom
 
 export type WeaknessResult = { ok: true } | { ok: false; error: "topic_required" | "invalid_weakness" | "unexpected" };
 
-// Saves a student's weakness in one topic of one course, from 0 (strong) to 1 (weak). The one way the profile is written:
-// for US-24 (self-rating) and US-25 (performance) to call once they exist. Only that course's row for that topic changes.
+// Saves a student's weakness in one topic of one course, from 0 (strong) to 1 (weak). US-24 uses this setter in its
+// transaction; US-25 updates its event/counters/profile atomically in learning-evidence.ts. New producers use that contract.
 // US-24 also passes the rating it came from (`confidence`, null when skipped) and its transaction (`client`); without a
 // `confidence` the stored rating is left as it is.
 export async function setTopicWeakness(
   userId: string, courseId: string, topic: string, weakness: number,
-  options: { confidence?: number | null; client?: Pick<Prisma.TransactionClient, "learningTopic"> } = {},
+  options: { confidence?: number | null; baselineWeakness?: number; client?: Pick<Prisma.TransactionClient, "learningTopic"> } = {},
 ): Promise<WeaknessResult> {
   const key = topicKey(topic);
   if (!key) return { ok: false, error: "topic_required" };
   if (!isWeakness(weakness)) return { ok: false, error: "invalid_weakness" };
   const rating = options.confidence === undefined ? {} : { confidence: options.confidence };
+  const baseline = options.baselineWeakness === undefined ? {} : { baselineWeakness: options.baselineWeakness };
   try {
     await (options.client ?? db).learningTopic.upsert({
       where: { userId_courseId_topicKey: { userId, courseId, topicKey: key } },
-      create: { userId, courseId, topicKey: key, topic: tidyTopic(topic), weakness, ...rating },
-      update: { weakness, ...rating },
+      create: { userId, courseId, topicKey: key, topic: tidyTopic(topic), weakness, ...rating, ...baseline },
+      update: { weakness, ...rating, ...baseline },
     });
     return { ok: true };
   } catch (error) {

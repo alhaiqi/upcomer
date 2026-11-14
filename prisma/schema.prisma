@@ -62,6 +62,8 @@ model User {
   closedReports       QuestionReport[]     @relation("ClosedQuestionReports")
   learningTopics      LearningTopic[]
   questionProgress    QuestionProgress[]
+  learningEvents      LearningEvent[]
+  generatedQuestions  GeneratedPracticeQuestion[]
 
   // Added for US-34: advice a student wrote, and advice an admin removed.
   advice              Advice[]             @relation("AdviceAuthored")
@@ -126,6 +128,8 @@ model Course {
   questionReports  QuestionReport[]
   learningTopics   LearningTopic[]
   questionProgress QuestionProgress[]
+  learningEvents   LearningEvent[]
+  generatedQuestions GeneratedPracticeQuestion[]
   // Added for US-34.
   advice           Advice[]
   createdAt        DateTime           @default(now())
@@ -262,6 +266,8 @@ model Question {
   // Set when an admin corrected the extracted text.
   textCorrectedAt    DateTime?
   corrections        QuestionCorrection[]
+  learningEvents     LearningEvent[]
+  generatedQuestions GeneratedPracticeQuestion[]
   createdAt          DateTime             @default(now())
   updatedAt          DateTime             @updatedAt
 
@@ -384,12 +390,16 @@ model LearningTopic {
   topicKey  String
   // The topic as first written, for display.
   topic     String
-  // How weak the student is in the topic, from 0 (strong) to 1 (weak). Written with setTopicWeakness; how it is worked out
-  // (self-rating, US-24; performance, US-25) belongs to those stories.
+  // How weak the student is, from 0 to 1. Confidence saves and performance events combine a two-observation prior
+  // with actual correct/incorrect counts; see learning-evidence-rules.ts.
   weakness  Float
   // The student's own confidence rating, 1 (not confident) to 5 (very confident), from US-24. Null when the topic was
   // skipped, or when the row was written by other code (for example US-25) without a rating.
   confidence Int?
+  // Confidence (or the pre-performance weakness) contributes two prior observations.
+  baselineWeakness Float?
+  correctCount Int @default(0)
+  incorrectCount Int @default(0)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -480,4 +490,69 @@ model Advice {
   @@index([fileId])
   @@index([termId])
   @@index([groupId])
+}
+
+enum LearningSource {
+  QUESTION_BANK
+  MOCK_EXAM
+  FLASHCARD
+  AI_INTERACTION
+}
+
+model LearningEvent {
+  id String @id @default(cuid())
+  userId String
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  courseId String
+  course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  source LearningSource
+  eventId String
+  // Immutable producer target survives deletion of the source; replay must match it.
+  targetKey String
+  topicKey String
+  topic String
+  correct Boolean
+  questionId String?
+  question Question? @relation(fields: [questionId], references: [id], onDelete: SetNull)
+  generatedQuestionId String?
+  generatedQuestion GeneratedPracticeQuestion? @relation(fields: [generatedQuestionId], references: [id], onDelete: SetNull)
+  createdAt DateTime @default(now())
+
+  @@unique([userId, source, eventId])
+  @@index([userId, courseId, topicKey])
+  @@index([questionId])
+  @@index([generatedQuestionId])
+}
+
+enum PracticeDifficulty {
+  EASY
+  MEDIUM
+  HARD
+}
+
+// US-44: private generated tasks. Replacing/removing a source deletes these items. Editing source text invalidates
+// its fingerprint so a future mock assembler cannot select stale content. Historical events keep their topic evidence.
+model GeneratedPracticeQuestion {
+  id String @id @default(cuid())
+  userId String
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  courseId String
+  course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  sourceQuestionId String
+  sourceQuestion Question @relation(fields: [sourceQuestionId], references: [id], onDelete: Cascade)
+  sourceFingerprint String
+  topicKey String
+  topic String
+  difficulty PracticeDifficulty
+  prompt String
+  contentHash String
+  generatorVersion String
+  // Source exams have no answer keys: do not invent a rubric or an assessed result.
+  rubric Json?
+  learningEvents LearningEvent[]
+  createdAt DateTime @default(now())
+
+  @@unique([userId, courseId, contentHash])
+  @@index([userId, courseId, difficulty])
+  @@index([sourceQuestionId])
 }

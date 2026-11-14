@@ -7,7 +7,7 @@ import { getUploadOptions } from "@/lib/uploads";
 
 export const dynamic = "force-dynamic";
 
-export default async function AdminFilesPage({ searchParams }: { searchParams: Promise<{ courseId?: string; saved?: string; error?: string }> }) {
+export default async function AdminFilesPage({ searchParams }: { searchParams: Promise<{ courseId?: string; saved?: string; error?: string; cleanup?: string }> }) {
   await requireAdmin("/admin/files");
   const { courseId: requested, ...notice } = await searchParams;
   const courseId = requested?.trim() ?? "";
@@ -16,6 +16,7 @@ export default async function AdminFilesPage({ searchParams }: { searchParams: P
   return <><Link className="back" href="/admin/catalog">← Back to catalog</Link><span className="eyebrow">Admin</span><h1>Files</h1>
     <p className="muted">Tag each exam and material with its course, professor, year, term, topic, and type.</p>
     <FileMetadataNotice {...notice} />
+    {notice.cleanup === "1" && <p className="notice" role="alert">The file was removed, but old storage cleanup needs an administrator&apos;s attention. Check monitoring.</p>}
     <form className="search" action="/admin/files" method="get" role="search">
       <select name="courseId" defaultValue={courseId} aria-label="Filter by course">
         <option value="">All courses</option>

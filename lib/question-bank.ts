@@ -38,6 +38,53 @@ function logGroupingDecisions(courseId: string, groups: RankedGroup[], questionC
 // Regroups (US-15a, US-15b) and re-ranks (US-16) every question of a course. Call it after questions are added, changed, or
 // removed, or after a paper moves to another course (for both courses). Groups whose key is unchanged keep their ID.
 
+// US-73 uses the same regroup inside its file mutation transaction, so readers never see stale rankings.
+export async function regroupCourseInTransaction(tx: Prisma.TransactionClient, courseId: string) {
+  // One rebuild per course at a time; a second one waits and then sees the first one's result.
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${courseId}))`;
+  const questions = await tx.question.findMany({
+    where: { file: courseExams(courseId) },
+    select: { id: true, fileId: true, number: true, text: true, groupId: true, pinnedToQuestionId: true, splitOut: true, file: { select: { year: true } } },
+  });
+
+  const ranked = rankGroups(groupCorrectedQuestions(questions.map(({ id, fileId, number, text, pinnedToQuestionId, splitOut, file }) => ({ id, fileId, number, text, pinnedToQuestionId, splitOut, year: file.year }))));
+
+
+  await tx.questionGroup.deleteMany({ where: { courseId, normalizedText: { notIn: ranked.map(group => group.normalizedText) } } });
+  // Written in a few batched statements rather than one per group, so a large paper regroups quickly (US-14 cross-test).
+  const existing = new Map((await tx.questionGroup.findMany({
+    where: { courseId }, select: { id: true, normalizedText: true, text: true, paperCount: true, rank: true },
+  })).map(group => [group.normalizedText, group]));
+  const added = ranked.filter(group => !existing.has(group.normalizedText));
+  const groupIds = new Map([...existing].map(([key, group]) => [key, group.id]));
+  if (added.length) {
+    const created = await tx.questionGroup.createManyAndReturn({
+      data: added.map(group => ({ courseId, normalizedText: group.normalizedText, text: group.text, paperCount: group.paperCount, rank: group.rank })),
+      select: { id: true, normalizedText: true },
+    });
+    created.forEach(group => groupIds.set(group.normalizedText, group.id));
+  }
+  for (const group of ranked) {
+    const old = existing.get(group.normalizedText);
+    if (old && (old.text !== group.text || old.paperCount !== group.paperCount || old.rank !== group.rank)) {
+      await tx.questionGroup.update({ where: { id: old.id }, data: { text: group.text, paperCount: group.paperCount, rank: group.rank } });
+    }
+  }
+  // Questions with no text left after cleaning (for example only a number) belong to no group.
+  const target = new Map<string, string | null>(questions.map(question => [question.id, null]));
+  for (const group of ranked) for (const question of group.questions) target.set(question.id, groupIds.get(group.normalizedText)!);
+  const moved = questions.filter(question => question.groupId !== target.get(question.id));
+  const regrouped = moved.filter(question => target.get(question.id) !== null);
+  if (regrouped.length) {
+    const ids = regrouped.map(question => question.id);
+    const newGroupIds = regrouped.map(question => target.get(question.id)!);
+    await tx.$executeRaw`UPDATE "Question" SET "groupId" = v.group_id, "updatedAt" = NOW() FROM unnest(${ids}::text[], ${newGroupIds}::text[]) AS v(id, group_id) WHERE "Question"."id" = v.id`;
+  }
+  const ungrouped = moved.filter(question => target.get(question.id) === null).map(question => question.id);
+  if (ungrouped.length) await tx.question.updateMany({ where: { id: { in: ungrouped } }, data: { groupId: null } });
+  return { result: { ok: true as const, groupCount: ranked.length, questionCount: questions.length }, decisions: ranked };
+}
+
 export async function rebuildQuestionBank(courseId: string): Promise<RebuildResult> {
   try {
     const course = await db.course.findUnique({ where: { id: courseId }, select: { id: true } });
@@ -45,53 +92,7 @@ export async function rebuildQuestionBank(courseId: string): Promise<RebuildResu
       logError("question_grouping_rejected", { courseId, reason: "course_not_found" });
       return { ok: false, error: "not_found" };
     }
-    let decisions: RankedGroup[] = [];
-    const result = await db.$transaction(async tx => {
-      // One rebuild per course at a time; a second one waits and then sees the first one's result.
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${courseId}))`;
-      const questions = await tx.question.findMany({
-        where: { file: courseExams(courseId) },
-        select: { id: true, fileId: true, number: true, text: true, groupId: true, pinnedToQuestionId: true, splitOut: true, file: { select: { year: true } } },
-      });
-
-      const ranked = rankGroups(groupCorrectedQuestions(questions.map(({ id, fileId, number, text, pinnedToQuestionId, splitOut, file }) => ({ id, fileId, number, text, pinnedToQuestionId, splitOut, year: file.year }))));
-
-      decisions = ranked;
-
-      await tx.questionGroup.deleteMany({ where: { courseId, normalizedText: { notIn: ranked.map(group => group.normalizedText) } } });
-      // Written in a few batched statements rather than one per group, so a large paper regroups quickly (US-14 cross-test).
-      const existing = new Map((await tx.questionGroup.findMany({
-        where: { courseId }, select: { id: true, normalizedText: true, text: true, paperCount: true, rank: true },
-      })).map(group => [group.normalizedText, group]));
-      const added = ranked.filter(group => !existing.has(group.normalizedText));
-      const groupIds = new Map([...existing].map(([key, group]) => [key, group.id]));
-      if (added.length) {
-        const created = await tx.questionGroup.createManyAndReturn({
-          data: added.map(group => ({ courseId, normalizedText: group.normalizedText, text: group.text, paperCount: group.paperCount, rank: group.rank })),
-          select: { id: true, normalizedText: true },
-        });
-        created.forEach(group => groupIds.set(group.normalizedText, group.id));
-      }
-      for (const group of ranked) {
-        const old = existing.get(group.normalizedText);
-        if (old && (old.text !== group.text || old.paperCount !== group.paperCount || old.rank !== group.rank)) {
-          await tx.questionGroup.update({ where: { id: old.id }, data: { text: group.text, paperCount: group.paperCount, rank: group.rank } });
-        }
-      }
-      // Questions with no text left after cleaning (for example only a number) belong to no group.
-      const target = new Map<string, string | null>(questions.map(question => [question.id, null]));
-      for (const group of ranked) for (const question of group.questions) target.set(question.id, groupIds.get(group.normalizedText)!);
-      const moved = questions.filter(question => question.groupId !== target.get(question.id));
-      const regrouped = moved.filter(question => target.get(question.id) !== null);
-      if (regrouped.length) {
-        const ids = regrouped.map(question => question.id);
-        const newGroupIds = regrouped.map(question => target.get(question.id)!);
-        await tx.$executeRaw`UPDATE "Question" SET "groupId" = v.group_id, "updatedAt" = NOW() FROM unnest(${ids}::text[], ${newGroupIds}::text[]) AS v(id, group_id) WHERE "Question"."id" = v.id`;
-      }
-      const ungrouped = moved.filter(question => target.get(question.id) === null).map(question => question.id);
-      if (ungrouped.length) await tx.question.updateMany({ where: { id: { in: ungrouped } }, data: { groupId: null } });
-      return { ok: true as const, groupCount: ranked.length, questionCount: questions.length };
-    }, { timeout: 30_000 });
+    const { result, decisions } = await db.$transaction(tx => regroupCourseInTransaction(tx, courseId), { timeout: 30_000 });
     // Logged only once the transaction committed, so the monitoring page never shows decisions that were rolled back.
     logGroupingDecisions(courseId, decisions, result.questionCount);
     return result;

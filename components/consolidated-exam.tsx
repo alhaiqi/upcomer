@@ -28,6 +28,7 @@ function Question({ question, report, progress }: { question: ExamQuestion; repo
     <span className="eyebrow">Question {question.position}{" "}<span className={`${styles.badge} ${styles[question.tier]}`}>{TIER_LABELS[question.tier]}</span></span>
     <p className={styles.text}>{question.text}</p>
     <p className="muted">Appeared in {question.paperCount} of {plural(question.totalPapers, "paper")}</p>
+    {question.priorityExplanation && <details><summary>Why this priority?</summary><p className="muted">{question.priorityExplanation}</p></details>}
     <details className={styles.sources}>
       <summary>Show the {question.paperCount === 1 ? "source paper" : `${question.paperCount} source papers`}</summary>
       <ul aria-label={`Source papers of question ${question.position}`}>{question.papers.map(paper => <li key={paper.id}>

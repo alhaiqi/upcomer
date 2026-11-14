@@ -5,6 +5,7 @@ import { NEUTRAL_WEAKNESS, setTopicWeakness, topicKey } from "@/lib/learning-pro
 import { logError } from "@/lib/logger";
 import { checkRateLimit, limitFromEnv } from "@/lib/rate-limit";
 import { parseRatings, weaknessFromRating, type ConfidenceRefusal } from "@/lib/topic-confidence-rules";
+import { evidenceWeakness } from "@/lib/learning-evidence-rules";
 
 // A student's confidence in each topic of a course (US-24), saved as their learning profile's weakness (US-33) with
 // setTopicWeakness, together with the rating itself so the form can show it again. Every read and write is for one
@@ -78,19 +79,22 @@ export async function saveTopicConfidence(userId: string, courseId: string, entr
     if (!parsed.ok) return refuse(parsed.error);
     const names = new Map(topics.map(topic => [topic.topicKey, topic.topic]));
     const counts = await db.$transaction(async tx => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`learning-profile:${userId}:${courseId}`}))`;
       const existing = new Map((await tx.learningTopic.findMany({
         where: { userId, courseId, topicKey: { in: parsed.ratings.map(item => item.topicKey) } },
-        select: { topicKey: true, confidence: true },
-      })).map(row => [row.topicKey, row.confidence]));
+        select: { topicKey: true, confidence: true, correctCount: true, incorrectCount: true },
+      })).map(row => [row.topicKey, row]));
       const counts = { rated: 0, skipped: 0, unchanged: 0 };
       for (const { topicKey: key, rating } of parsed.ratings) {
         // A skipped topic whose weakness came from other code keeps it.
-        if (rating === null && existing.get(key) === null) {
+        if (rating === null && existing.get(key)?.confidence === null) {
           counts.unchanged++;
           continue;
         }
-        const weakness = rating === null ? NEUTRAL_WEAKNESS : weaknessFromRating(rating);
-        const result = await setTopicWeakness(userId, courseId, names.get(key)!, weakness, { confidence: rating, client: tx });
+        const baseline = rating === null ? NEUTRAL_WEAKNESS : weaknessFromRating(rating);
+        const row = existing.get(key);
+        const weakness = evidenceWeakness(baseline, row?.correctCount ?? 0, row?.incorrectCount ?? 0);
+        const result = await setTopicWeakness(userId, courseId, names.get(key)!, weakness, { confidence: rating, baselineWeakness: baseline, client: tx });
         // setTopicWeakness reports a failure instead of throwing; throwing here rolls every write back.
         if (!result.ok) throw new WriteFailed(result.error);
         if (rating === null) counts.skipped++;

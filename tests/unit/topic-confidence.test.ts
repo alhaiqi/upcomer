@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // one transaction. The database and setTopicWeakness are mocked; a transaction keeps its writes only if it succeeds.
 
 const mocks = vi.hoisted(() => ({
+  executeRaw: vi.fn(),
   courseFile: { findMany: vi.fn() },
   learningTopic: { findMany: vi.fn() },
   transaction: vi.fn(),
@@ -42,7 +43,7 @@ beforeEach(() => {
   });
   mocks.transaction.mockReset().mockImplementation(async (work: (tx: unknown) => Promise<unknown>) => {
     staged = [];
-    const result = await work({ learningTopic: mocks.learningTopic });
+    const result = await work({ learningTopic: mocks.learningTopic, $executeRaw: mocks.executeRaw });
     committed.push(...staged);
     return result;
   });
@@ -118,11 +119,11 @@ describe("saveTopicConfidence (US-24)", () => {
     expect(mocks.transaction).toHaveBeenCalledTimes(1);
     expect(mocks.transaction).toHaveBeenCalledWith(expect.any(Function), SAVE_TRANSACTION);
     expect(SAVE_TRANSACTION.timeout).toBeGreaterThan(5_000);
-    const tx = { learningTopic: mocks.learningTopic };
+    const tx = { learningTopic: mocks.learningTopic, $executeRaw: mocks.executeRaw };
     expect(committed).toEqual([
-      ["student-1", "course-a", "TCP", 1, { confidence: 1, client: tx }],
-      ["student-1", "course-a", "Routing", 0.25, { confidence: 4, client: tx }],
-      ["student-1", "course-a", "DNS", NEUTRAL_WEAKNESS, { confidence: null, client: tx }],
+      ["student-1", "course-a", "TCP", 1, { confidence: 1, baselineWeakness: 1, client: tx }],
+      ["student-1", "course-a", "Routing", 0.25, { confidence: 4, baselineWeakness: 0.25, client: tx }],
+      ["student-1", "course-a", "DNS", NEUTRAL_WEAKNESS, { confidence: null, baselineWeakness: NEUTRAL_WEAKNESS, client: tx }],
     ]);
     expect(logged()).toEqual([{ event: "topic_confidence_saved", level: "info", timestamp: expect.any(String), userId: "student-1", courseId: "course-a", ratedTopics: "2", skippedTopics: "1", unchangedTopics: "0" }]);
   });

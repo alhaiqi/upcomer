@@ -1,4 +1,20 @@
 type LogEvent =
+  | "advice_publish_refused"
+  | "advice_publish_rate_limited"
+  | "advice_published"
+  | "advice_publish_failed"
+  | "advice_search_failed"
+  | "advice_retrieval_failed"
+  | "learning_evidence_saved"
+  | "learning_evidence_failed"
+  | "learning_evidence_refused"
+  | "practice_generation_completed"
+  | "practice_generation_failed"
+  | "practice_generation_refused"
+  | "file_management_completed"
+  | "file_management_failed"
+  | "file_management_refused"
+  | "file_management_cleanup_failed"
   | "course_retrieval_failed"
   | "exam_list_retrieval_failed"
   | "material_list_retrieval_failed"
@@ -92,6 +108,22 @@ export type LogLine = { event: LogEvent; level: LogLevel; timestamp: string } & 
 
 // Severity of every event (US-87). error: something failed that should not have. warn: an expected refusal. info: notable, not a problem.
 export const EVENT_LEVELS: Record<LogEvent, LogLevel> = {
+  advice_publish_refused: "warn",
+  advice_publish_rate_limited: "warn",
+  advice_published: "info",
+  advice_publish_failed: "error",
+  advice_search_failed: "error",
+  advice_retrieval_failed: "error",
+  learning_evidence_saved: "info",
+  learning_evidence_failed: "error",
+  learning_evidence_refused: "warn",
+  practice_generation_completed: "info",
+  practice_generation_failed: "error",
+  practice_generation_refused: "warn",
+  file_management_completed: "info",
+  file_management_failed: "error",
+  file_management_refused: "warn",
+  file_management_cleanup_failed: "error",
   // Member 1: authentication and My Courses
   signup_failed: "warn",
   login_failed: "warn",
