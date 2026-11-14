@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, realpath, unlink, writeFile } from "node:fs/promises";
+import { mkdir, open, realpath, unlink } from "node:fs/promises";
 import path from "node:path";
 import { db } from "@/lib/db";
 import { extractExamQuestions } from "@/lib/exam-extraction";
@@ -26,7 +26,7 @@ class ManagementRefusal extends Error {
 
 // Verify canonical paths as well as lexical keys. Replacement writes never follow an uploads-directory symlink outside
 // the configured root. A fresh UUID and exclusive creation prevent overwriting another file.
-async function stageReplacement(category: string, fileName: string, bytes: Uint8Array) {
+async function stageReplacement(fileId: string, category: string, fileName: string, bytes: Uint8Array) {
   const { extension, mimeType } = validateUploadFile(fileName, bytes);
   const key = `${category === "EXAM" ? "exams" : "materials"}/${randomUUID()}.${extension}`;
   const destination = resolveStoragePath(key);
@@ -35,7 +35,17 @@ async function stageReplacement(category: string, fileName: string, bytes: Uint8
   const parent = await realpath(path.dirname(destination));
   const relative = path.relative(root, parent);
   if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) throw new ManagementRefusal("unsafe_storage");
-  await writeFile(destination, bytes, { flag: "wx" });
+  // Only unlink a file after we successfully created it. A partial write can fail before staging returns, so the
+  // outer mutation has no staged path to clean up yet; an EEXIST failure must never remove someone else's file.
+  const handle = await open(destination, "wx");
+  try {
+    await handle.writeFile(bytes);
+    await handle.close();
+  } catch (error) {
+    await handle.close().catch(() => {});
+    await unlink(destination).catch(() => logError("file_management_cleanup_failed", { fileId, operation: "staging" }));
+    throw error;
+  }
   return { storageKey: key, mimeType, destination };
 }
 
@@ -76,15 +86,22 @@ export async function manageFile(adminId: string, fileId: string, expectedVersio
         try { texts = await extractExamQuestions(mutation.bytes); }
         catch { throw new ManagementRefusal("invalid_file"); }
       }
-      staged = await stageReplacement(before.category, mutation.fileName, mutation.bytes);
+      staged = await stageReplacement(fileId, before.category, mutation.fileName, mutation.bytes);
     }
+    // A metadata edit can move a paper before its old groups have been rebuilt. Removing its questions affects those
+    // groups too. Lock all affected courses in a stable order and rebuild them together instead of leaving old counts.
+    const memberships = await db.question.findMany({ where: { fileId }, select: { group: { select: { courseId: true } } } });
+    const groupedCourses = new Set(memberships.flatMap(item => item.group ? [item.group.courseId] : []));
+    const affectedCourses = [...new Set([before.courseId, ...groupedCourses])].sort();
     await db.$transaction(async tx => {
       // Same lock order as generation/regroup. startRun's file lock prevents starting a processing run during mutation.
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${before.courseId}))`;
+      for (const courseId of affectedCourses) await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${courseId}))`;
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`exam-processing:${fileId}`}))`;
       const file = await tx.courseFile.findUnique({ where: { id: fileId } });
       if (!file) throw new ManagementRefusal("not_found");
       if (file.updatedAt.toISOString() !== expectedVersion || file.courseId !== before.courseId) throw new ManagementRefusal("stale");
+      const currentMemberships = await tx.question.findMany({ where: { fileId }, select: { group: { select: { courseId: true } } } });
+      if (currentMemberships.some(item => item.group && !affectedCourses.includes(item.group.courseId))) throw new ManagementRefusal("stale");
       const active = await tx.fileProcessingRun.findFirst({ where: { fileId, status: "RUNNING", createdAt: { gt: new Date(Date.now() - 15 * 60_000) } } });
       if (active) throw new ManagementRefusal("busy");
       if (mutation.operation === "remove") await tx.courseFile.delete({ where: { id: fileId } });
@@ -101,7 +118,9 @@ export async function manageFile(adminId: string, fileId: string, expectedVersio
           await tx.fileProcessingRun.create({ data: { fileId, status: "SUCCEEDED", stage: "GROUPING" } });
         }
       }
-      if (file.category === "EXAM") await regroupCourseInTransaction(tx, file.courseId);
+      for (const courseId of affectedCourses) {
+        if (file.category === "EXAM" || groupedCourses.has(courseId)) await regroupCourseInTransaction(tx, courseId);
+      }
     }, { maxWait: 10_000, timeout: 30_000 });
     committed = true;
     const cleaned = await cleanupStoredFile(before.storageKey, fileId);

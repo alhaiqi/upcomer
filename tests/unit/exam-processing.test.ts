@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   file: { findUnique: vi.fn(), findMany: vi.fn() },
-  run: { create: vi.fn(), update: vi.fn(), findFirst: vi.fn() },
+  run: { create: vi.fn(), update: vi.fn(), updateMany: vi.fn(), findFirst: vi.fn() },
   countQuestions: vi.fn(), deleteQuestions: vi.fn(), createQuestions: vi.fn(), transaction: vi.fn(), lock: vi.fn(),
   getOriginalFile: vi.fn(), extract: vi.fn(), rebuild: vi.fn(), log: vi.fn(),
 }));
@@ -22,19 +22,43 @@ import { FileUnavailableError } from "@/lib/files";
 import { canRetryRun, getExamProcessingRuns, processExamFile, retryFailedExam } from "@/lib/exam-processing";
 
 beforeEach(() => {
-  for (const mock of [mocks.file.findUnique, mocks.file.findMany, mocks.run.create, mocks.run.update, mocks.run.findFirst,
+  for (const mock of [mocks.file.findUnique, mocks.file.findMany, mocks.run.create, mocks.run.update, mocks.run.updateMany, mocks.run.findFirst,
     mocks.countQuestions, mocks.deleteQuestions, mocks.createQuestions, mocks.transaction, mocks.lock, mocks.getOriginalFile, mocks.extract, mocks.rebuild, mocks.log]) mock.mockReset();
-  mocks.file.findUnique.mockResolvedValue({ id: "file-a", courseId: "course-a", category: "EXAM", status: "PUBLISHED", mimeType: "application/pdf" });
-  mocks.run.create.mockResolvedValue({ id: "run-a" });
+  mocks.file.findUnique.mockResolvedValue({ id: "file-a", courseId: "course-a", category: "EXAM", status: "PUBLISHED", mimeType: "application/pdf", storageKey: "exams/file-a.pdf", updatedAt: new Date("2026-01-01") });
+  mocks.run.create.mockImplementation(async () => {
+    mocks.run.findFirst.mockResolvedValue({ id: "run-a", status: "RUNNING" });
+    return { id: "run-a" };
+  });
   mocks.run.update.mockResolvedValue({});
+  mocks.run.updateMany.mockResolvedValue({ count: 1 });
   mocks.getOriginalFile.mockResolvedValue({ bytes: new Uint8Array([1]) });
   mocks.extract.mockResolvedValue(["1. First question?", "2. Second question?"]);
   mocks.countQuestions.mockResolvedValue(0);
   mocks.rebuild.mockResolvedValue({ ok: true });
-  mocks.transaction.mockImplementation((work: (tx: object) => unknown) => work({ $executeRaw: mocks.lock, fileProcessingRun: mocks.run, question: { deleteMany: mocks.deleteQuestions, createMany: mocks.createQuestions } }));
+  mocks.transaction.mockImplementation((work: (tx: object) => unknown) => work({ $executeRaw: mocks.lock, courseFile: mocks.file, fileProcessingRun: mocks.run, question: { deleteMany: mocks.deleteQuestions, createMany: mocks.createQuestions } }));
 });
 
 describe("exam processing and retry", () => {
+  it("never writes old extracted text after the source file revision changes", async () => {
+    const snapshot = await mocks.file.findUnique();
+    mocks.extract.mockImplementation(async () => {
+      mocks.file.findUnique.mockResolvedValue({ ...snapshot, storageKey: "exams/new.pdf", updatedAt: new Date("2026-01-02") });
+      return ["Obsolete question text"];
+    });
+    expect(await processExamFile("file-a")).toMatchObject({ ok: false, reason: "superseded" });
+    expect(mocks.deleteQuestions).not.toHaveBeenCalled();
+    expect(mocks.createQuestions).not.toHaveBeenCalled();
+    expect(mocks.run.updateMany).toHaveBeenCalledWith({ where: { id: "run-a", status: "RUNNING" }, data: { status: "FAILED", stage: "EXTRACTION", reason: "superseded" } });
+  });
+  it("an expired attempt cannot publish questions after a newer retry takes over", async () => {
+    mocks.extract.mockImplementation(async () => {
+      mocks.run.findFirst.mockResolvedValue({ id: "newer-run", status: "RUNNING" });
+      return ["Obsolete question text"];
+    });
+    expect(await processExamFile("file-a")).toMatchObject({ ok: false, reason: "superseded" });
+    expect(mocks.createQuestions).not.toHaveBeenCalled();
+    expect(mocks.rebuild).not.toHaveBeenCalled();
+  });
   it("refuses a stale displayed run even if the newer run has also failed", async () => {
     mocks.run.findFirst.mockResolvedValue({ id: "new-run", status: "FAILED" });
     expect(await retryFailedExam("file-a", "old-run")).toEqual({ ok: false, reason: "not_failed" });
@@ -150,7 +174,8 @@ describe("exam processing and retry", () => {
 
   it("starts a run under a per-file lock, and refuses a retry another retry has just started", async () => {
     await processExamFile("file-a");
-    expect(mocks.lock.mock.calls[0].slice(1)).toEqual(["exam-processing:file-a"]);
+    expect(mocks.lock.mock.calls[0].slice(1)).toEqual(["course-a"]);
+    expect(mocks.lock.mock.calls[1].slice(1)).toEqual(["exam-processing:file-a"]);
     mocks.run.create.mockClear();
     mocks.extract.mockClear();
     // Failed when the retry was clicked, but another retry started a run before this one got the lock.

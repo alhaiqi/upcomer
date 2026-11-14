@@ -16,6 +16,19 @@ export type LearningEventInput = {
   topic?: string;
   correct: boolean;
 };
+
+export const isEventId = (value: unknown): value is string => typeof value === "string" && /^[a-zA-Z0-9:_-]{1,160}$/.test(value);
+export function isLearningEvent(value: unknown): value is LearningEventInput {
+  if (!value || typeof value !== "object") return false;
+  const event = value as LearningEventInput;
+  if (!isEventId(event.eventId) || !learningSources.includes(event.source) || typeof event.correct !== "boolean") return false;
+  for (const id of [event.questionId, event.generatedQuestionId]) if (id !== undefined && (typeof id !== "string" || !id.trim())) return false;
+  if (event.topic !== undefined && (typeof event.topic !== "string" || event.topic.length > 100)) return false;
+  if (event.questionId !== undefined && event.generatedQuestionId !== undefined) return false;
+  if (event.source === "QUESTION_BANK") return event.questionId !== undefined;
+  if (event.source === "MOCK_EXAM") return event.questionId !== undefined || event.generatedQuestionId !== undefined;
+  return event.questionId !== undefined || event.generatedQuestionId !== undefined || Boolean(event.topic?.trim());
+}
 export type PracticeError = "invalid_outcome" | "not_found" | "topic_required" | "duplicate_conflict" | "rate_limited" | "unexpected";
 const messages: Record<PracticeError, string> = {
   invalid_outcome: "Choose correct or incorrect for a valid practice attempt.",

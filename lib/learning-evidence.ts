@@ -1,8 +1,7 @@
-import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { PUBLISHED_FILES } from "@/lib/file-visibility";
 import { NEUTRAL_WEAKNESS, questionTopic, topicKey } from "@/lib/learning-profile";
-import { evidenceWeakness, learningSources, type LearningEventInput, type PracticeError } from "@/lib/learning-evidence-rules";
+import { evidenceWeakness, isEventId, isLearningEvent, type LearningEventInput, type PracticeError } from "@/lib/learning-evidence-rules";
 import { logError } from "@/lib/logger";
 import { checkRateLimit, limitFromEnv } from "@/lib/rate-limit";
 import { sourceFingerprint } from "@/lib/practice-generation-rules";
@@ -16,12 +15,15 @@ export type EvidenceResult = { ok: true; recorded: number; duplicates: number } 
 // userId comes from the session or a stored attempt's owner, not an untrusted form. MOCK_EXAM callers must first persist
 // and validate their rubric-backed grading. E5 sources are supported by the contract but have no producers in this sprint.
 export async function recordLearningEvents(userId: string, courseId: string, events: LearningEventInput[]): Promise<EvidenceResult> {
-  if (!events.length || events.length > 100 || events.some(event =>
-    !/^[a-zA-Z0-9:_-]{1,160}$/.test(event.eventId) || !learningSources.includes(event.source) || typeof event.correct !== "boolean"
-    || (Boolean(event.questionId) === Boolean(event.generatedQuestionId) && ["QUESTION_BANK", "MOCK_EXAM"].includes(event.source))
-    || (event.source === "QUESTION_BANK" && Boolean(event.generatedQuestionId)))) return { ok: false, error: "invalid_outcome" };
+  if (!Array.isArray(events) || !events.length || events.length > 100 || !events.every(isLearningEvent)) {
+    logError("learning_evidence_refused", { userId, courseId, reason: "invalid_outcome" });
+    return { ok: false, error: "invalid_outcome" };
+  }
   try {
     const result = await db.$transaction(async tx => {
+      // Event IDs are unique across this student's courses, not only inside one profile. Serializing deliveries per
+      // student lets a cross-course collision return duplicate_conflict rather than a database unique-index failure.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`learning-events:${userId}`}))`;
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`learning-profile:${userId}:${courseId}`}))`;
       if (!await tx.course.findUnique({ where: { id: courseId }, select: { id: true } })) throw new EvidenceRefusal("not_found");
       let recorded = 0;
@@ -91,14 +93,26 @@ export async function recordPracticeOutcome(userId: string, courseId: string, in
     logError("learning_evidence_refused", { userId, courseId, reason: "rate_limited" });
     return { ok: false as const, error: "rate_limited" as const };
   }
-  if (!["CORRECT", "INCORRECT"].includes(input.outcome)) return { ok: false as const, error: "invalid_outcome" as const };
+  if (!["CORRECT", "INCORRECT"].includes(input.outcome)) {
+    logError("learning_evidence_refused", { userId, courseId, reason: "invalid_outcome" });
+    return { ok: false as const, error: "invalid_outcome" as const };
+  }
   return recordLearningEvents(userId, courseId, [{ eventId: input.eventId, questionId: input.questionId, correct: input.outcome === "CORRECT", source: "QUESTION_BANK" }]);
 }
 
 // US-49 integration seam: grading must be committed and owned by this student before this trusted adapter is called.
 // Stable attempt/item identifiers make retrying delivery safe. No browser route accepts these grades.
 export function recordMockOutcomes(userId: string, courseId: string, attemptId: string, outcomes: Array<{ itemId: string; generatedQuestionId: string; correct: boolean }>) {
-  return recordLearningEvents(userId, courseId, outcomes.map(item => ({ source: "MOCK_EXAM", eventId: `${attemptId}:${item.itemId}`, generatedQuestionId: item.generatedQuestionId, correct: item.correct })));
+  if (!isEventId(attemptId) || !Array.isArray(outcomes) || outcomes.some(item => !item || !isEventId(item.itemId))) {
+    logError("learning_evidence_refused", { userId, courseId, reason: "invalid_outcome" });
+    return Promise.resolve({ ok: false as const, error: "invalid_outcome" as const });
+  }
+  return recordLearningEvents(userId, courseId, outcomes.map(item => {
+    // Keep existing simple producer keys compatible. Framed pairs cannot collide when either ID contains colons or
+    // the pair exceeds the event field's limit. The double-colon prefix cannot occur in a simple legacy pair.
+    const simple = `${attemptId}:${item.itemId}`;
+    const eventId = !attemptId.includes(":") && !item.itemId.includes(":") && simple.length <= 160
+      ? simple : `::${sourceFingerprint(JSON.stringify([attemptId, item.itemId]))}`;
+    return { source: "MOCK_EXAM", eventId, generatedQuestionId: item.generatedQuestionId, correct: item.correct };
+  }));
 }
-
-export type EvidenceClient = Pick<Prisma.TransactionClient, "learningEvent" | "learningTopic">;

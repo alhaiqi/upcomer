@@ -9,6 +9,15 @@ class GenerationRefusal extends Error {
   constructor(public reason: GenerationError) { super(reason); }
 }
 
+type Provenance = {
+  sourceFingerprint: string; topicKey: string;
+  sourceQuestion: { text: string; file: { courseId: string; category: string; status: string; topic: string | null } };
+};
+const hasCurrentSource = (item: Provenance, courseId: string) =>
+  item.sourceQuestion.file.courseId === courseId && item.sourceQuestion.file.category === "EXAM"
+  && item.sourceQuestion.file.status === "PUBLISHED" && item.sourceFingerprint === sourceFingerprint(item.sourceQuestion.text)
+  && item.topicKey === topicKey(item.sourceQuestion.file.topic);
+
 // US-44. Persisted item IDs and provenance are the input contract for US-45 mock assembly. No new tasks are inserted
 // into the historical Question/QuestionGroup tables, so generation never changes exam-frequency statistics.
 export async function generatePracticeQuestions(userId: string, courseId: string, settings: GenerationSettings) {
@@ -30,9 +39,16 @@ export async function generatePracticeQuestions(userId: string, courseId: string
       });
       const eligible = sources.filter(source => topicKey(source.file.topic) && (!settings.topicKey || topicKey(source.file.topic) === settings.topicKey) && source.text.trim().length >= 10 && source.text.length <= 12_000);
       if (!eligible.length) throw new GenerationRefusal("no_sources");
+      const existing = await tx.generatedPracticeQuestion.findMany({
+        where: { userId, courseId }, include: { sourceQuestion: { select: { text: true, file: { select: { courseId: true, category: true, status: true, topic: true } } } } },
+      });
+      const stale = existing.filter(item => !hasCurrentSource(item, courseId));
+      // Invalidated items are no longer usable by mocks. Free their unique hashes before regenerating an identical
+      // task under corrected topic metadata; event snapshots survive with a null generatedQuestionId.
+      if (stale.length) await tx.generatedPracticeQuestion.deleteMany({ where: { userId, courseId, id: { in: stale.map(item => item.id) } } });
       const seen = new Set([
         ...sources.map(source => contentHash(source.text)),
-        ...(await tx.generatedPracticeQuestion.findMany({ where: { userId, courseId }, select: { contentHash: true } })).map(item => item.contentHash),
+        ...existing.filter(item => hasCurrentSource(item, courseId)).map(item => item.contentHash),
       ]);
       const selected: Array<{ source: typeof eligible[number]; prompt: string; hash: string }> = [];
       // Round-robin tasks across papers before taking a second task from the same source.
@@ -70,10 +86,10 @@ export async function getGeneratedPracticeQuestions(userId: string, courseId: st
   try {
     const questions = await db.generatedPracticeQuestion.findMany({
       where: { userId, courseId, ...(settings.difficulty && { difficulty: settings.difficulty }), ...(settings.topicKey && { topicKey: settings.topicKey }), sourceQuestion: { file: { courseId, category: "EXAM", ...PUBLISHED_FILES } } },
-      include: { sourceQuestion: { select: { text: true, fileId: true, file: { select: { title: true, topic: true } } } } },
+      include: { sourceQuestion: { select: { text: true, fileId: true, file: { select: { title: true, topic: true, courseId: true, category: true, status: true } } } } },
       orderBy: [{ createdAt: "desc" }, { id: "asc" }],
     });
-    return questions.filter(item => item.sourceFingerprint === sourceFingerprint(item.sourceQuestion.text) && item.topicKey === topicKey(item.sourceQuestion.file.topic));
+    return questions.filter(item => hasCurrentSource(item, courseId));
   } catch (error) {
     logError("practice_generation_failed", { userId, courseId, operation: "read", errorType: error instanceof Error ? error.name : "Unknown" });
     throw error;

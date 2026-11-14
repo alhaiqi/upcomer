@@ -3,7 +3,16 @@ import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-const fault = vi.hoisted(() => ({ regroup: false }));
+const fault = vi.hoisted(() => ({ regroup: false, pauseNextExtraction: null as (() => Promise<void>) | null }));
+vi.mock("@/lib/exam-extraction", async importOriginal => {
+  const real = await importOriginal<typeof import("@/lib/exam-extraction")>();
+  return { ...real, extractExamQuestions: async (...args: Parameters<typeof real.extractExamQuestions>) => {
+    const pause = fault.pauseNextExtraction;
+    fault.pauseNextExtraction = null;
+    if (pause) await pause();
+    return real.extractExamQuestions(...args);
+  } };
+});
 vi.mock("@/lib/question-bank", async importOriginal => {
   const real = await importOriginal<typeof import("@/lib/question-bank")>();
   return { ...real, regroupCourseInTransaction: (...args: Parameters<typeof real.regroupCourseInTransaction>) => {
@@ -59,7 +68,7 @@ beforeAll(async () => {
   const pending = await paper(courses[0], "TCP", undefined, "PENDING");
   pendingQuestion = (await db.question.create({ data: { fileId: pending.id, number: 1, text: "Private pending question." } })).id;
 });
-beforeEach(() => { fault.regroup = false; resetRateLimits(); });
+beforeEach(() => { fault.regroup = false; fault.pauseNextExtraction = null; resetRateLimits(); });
 afterEach(() => vi.unstubAllEnvs());
 afterAll(async () => {
   const stored = await db.courseFile.findMany({ where: { courseId: { in: courses } }, select: { storageKey: true } });
@@ -309,5 +318,76 @@ describe("US-73 atomic file replacement/removal", () => {
     const results = await Promise.all([1, 2].map(() => manageFile(admin, file.id, file.updatedAt.toISOString(), { operation: "remove", confirmed: true })));
     expect(results.filter(result => result.ok)).toHaveLength(1);
     expect((await getOriginalFile(shared.id)).bytes.length).toBeGreaterThan(0);
+  });
+});
+
+describe("second-pass integration regressions", () => {
+  it("removing a paper moved between courses also repairs its former course's stored counts", async () => {
+    const text = "1. Describe preserving provenance when an exam paper changes its course.";
+    const moved = await paper(courses[0], "Review moved", [text]);
+    await paper(courses[0], "Review moved", [text]);
+    const original = await db.question.findFirstOrThrow({ where: { fileId: moved.id } });
+    expect(await db.questionGroup.findUnique({ where: { id: original.groupId! } })).toMatchObject({ courseId: courses[0], paperCount: 2 });
+    const updated = await db.courseFile.update({ where: { id: moved.id }, data: { courseId: courses[1] } });
+    expect(await manageFile(admin, moved.id, updated.updatedAt.toISOString(), { operation: "remove", confirmed: true })).toMatchObject({ ok: true });
+    expect(await db.questionGroup.findUnique({ where: { id: original.groupId! } })).toMatchObject({ courseId: courses[0], paperCount: 1 });
+  });
+  it("cross-course deliveries with one student event ID return a controlled conflict", async () => {
+    for (let i = 0; i < 5; i++) {
+      const results = await Promise.all([
+        recordLearningEvents(students[2], courses[0], [{ source: "QUESTION_BANK", eventId: `cross-course-${i}`, questionId: questionA, correct: true }]),
+        recordLearningEvents(students[2], courses[1], [{ source: "QUESTION_BANK", eventId: `cross-course-${i}`, questionId: questionB, correct: true }]),
+      ]);
+      expect(results.filter(result => result.ok)).toHaveLength(1);
+      expect(results.find(result => !result.ok)).toEqual({ ok: false, error: "duplicate_conflict" });
+      expect(await db.learningEvent.count({ where: { userId: students[2], eventId: `cross-course-${i}` } })).toBe(1);
+    }
+  });
+  it("distinct mock attempt/item pairs cannot collide, and empty producer IDs are refused", async () => {
+    const generated = await generatePracticeQuestions(students[2], courses[1], { count: 1, difficulty: "HARD" });
+    expect(generated.ok).toBe(true); if (!generated.ok) throw new Error(generated.error);
+    const generatedQuestionId = generated.questions[0].id;
+    expect(await recordMockOutcomes(students[2], courses[1], "attempt:part", [{ itemId: "one", generatedQuestionId, correct: true }])).toEqual({ ok: true, recorded: 1, duplicates: 0 });
+    expect(await recordMockOutcomes(students[2], courses[1], "attempt", [{ itemId: "part:one", generatedQuestionId, correct: true }])).toEqual({ ok: true, recorded: 1, duplicates: 0 });
+    expect(await recordMockOutcomes(students[2], courses[1], "attempt:part", [{ itemId: "one", generatedQuestionId, correct: true }])).toEqual({ ok: true, recorded: 0, duplicates: 1 });
+    expect(await recordMockOutcomes(students[2], courses[1], "", [{ itemId: "one", generatedQuestionId, correct: true }])).toEqual({ ok: false, error: "invalid_outcome" });
+    expect(await recordMockOutcomes(students[2], courses[1], "valid-attempt", [{ itemId: "", generatedQuestionId, correct: true }])).toEqual({ ok: false, error: "invalid_outcome" });
+  });
+  it("a retagged source can regenerate a full library without stale hashes blocking every variant", async () => {
+    const file = await paper(courses[0], "Review old topic", ["1. Explain why stable provenance matters for a directed graph."]);
+    const original = await generatePracticeQuestions(students[2], courses[0], { count: 3, difficulty: "EASY", topicKey: "review old topic" });
+    expect(original.ok).toBe(true); if (!original.ok) throw new Error(original.error);
+    await recordMockOutcomes(students[2], courses[0], "before-retag", [{ itemId: "one", generatedQuestionId: original.questions[0].id, correct: false }]);
+    await db.courseFile.update({ where: { id: file.id }, data: { topic: "Review new topic" } });
+    expect(await getGeneratedPracticeQuestions(students[2], courses[0], { topicKey: "review old topic" })).toHaveLength(0);
+    const refreshed = await generatePracticeQuestions(students[2], courses[0], { count: 3, difficulty: "EASY", topicKey: "review new topic" });
+    expect(refreshed.ok).toBe(true); if (!refreshed.ok) throw new Error(refreshed.error);
+    expect(refreshed.questions.every(question => question.topicKey === "review new topic")).toBe(true);
+    expect(refreshed.questions.every(question => !original.questions.some(old => old.id === question.id))).toBe(true);
+    expect(await db.learningEvent.findFirst({ where: { generatedQuestionId: original.questions[0].id } })).toBeNull();
+    expect(await db.learningEvent.findFirst({ where: { userId: students[2], topicKey: "review old topic" } })).toMatchObject({ correct: false, generatedQuestionId: null });
+  });
+  it("an old extraction resuming after replacement cannot overwrite new questions or rankings", async () => {
+    const file = await paper(courses[0], "Review processing", ["1. Explain the obsolete delivery algorithm before replacement."]);
+    await db.question.deleteMany({ where: { fileId: file.id } });
+    let release!: () => void;
+    let entered!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    const reached = new Promise<void>(resolve => { entered = resolve; });
+    fault.pauseNextExtraction = async () => { entered(); await held; };
+    const oldProcessing = processExamFile(file.id);
+    await reached;
+    try {
+      const active = await db.fileProcessingRun.findFirstOrThrow({ where: { fileId: file.id, status: "RUNNING" }, orderBy: { createdAt: "desc" } });
+      await db.fileProcessingRun.update({ where: { id: active.id }, data: { createdAt: new Date(Date.now() - 20 * 60_000) } });
+      expect(await manageFile(admin, file.id, file.updatedAt.toISOString(), { operation: "replace", fileName: "new.pdf", bytes: textPdf([["1. Explain the replacement delivery algorithm with acknowledgements."]]) })).toMatchObject({ ok: true });
+    } finally { release(); }
+    expect(await oldProcessing).toMatchObject({ ok: false, reason: "superseded" });
+    const current = await db.courseFile.findUniqueOrThrow({ where: { id: file.id } }); keys.add(current.storageKey);
+    const stored = await db.question.findMany({ where: { fileId: file.id } });
+    expect(stored).toHaveLength(1); expect(stored[0].text).toContain("replacement delivery");
+    const exam = await getConsolidatedExam(courses[0]);
+    expect(exam.questions.some(question => question.text.includes("obsolete delivery"))).toBe(false);
+    expect(exam.questions.some(question => question.text.includes("replacement delivery"))).toBe(true);
   });
 });
