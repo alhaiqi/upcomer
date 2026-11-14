@@ -1,6 +1,6 @@
 # Ali Slim - Sprint 4 implementation and verification
 
-Implementation commit: `5c5e5a4`.
+Initial implementation commit: `5c5e5a4`. Second-pass fixes: `0af30df`.
 
 Branch: `ali_slim_sprint_4`, created from freshly fetched `origin/main` at `8473b83`. Original `ali_slim_sprint_3` and local `main` were not changed. Scope follows the five-page doubled-workload Sprint 4 plan: US-25 (8 SP), US-29 (3 SP), US-44 (8 SP), US-73 (3 SP), monitoring, regression verification, and assigned cross-testing. Work is AI-assisted and needs Ali Slim's review and Mohammed's independent acceptance.
 
@@ -62,11 +62,11 @@ Final cleanup queries found **0 Sprint 4 test courses, 0 test users, and 0 test 
 | Migrations on an empty local database | All 17 migrations applied |
 | Prisma migrated database versus schema | No difference detected |
 | ESLint and TypeScript | Passed on the final implementation |
-| Unit/component suite | 1,058 passed in 69 files |
-| Full integration suite | 124 passed in 12 files |
+| Unit/component suite | 1,074 passed in 71 files (second pass) |
+| Full integration suite | 129 passed in 12 files (second pass) |
 | Production build | Passed; browser run builds again |
 | Versioned US-93 accuracy gate | Passed without changing baseline/thresholds: precision 100%, recall 86.8%, F1 92.9%, rank correlation 94.2%, top-5 precision 100% |
-| Full browser suite | 94 passed, none failed or skipped, against a fresh production build (5.0 minutes including build) |
+| Full browser suite | 94 passed, none failed or skipped, against a fresh production build (second pass: 4.2 minutes including build) |
 
 Visual checks: inspected desktop practice, admin management, and 375px dark-mode generation screenshots. The mobile browser check confirms no horizontal overflow. Successful practice, generation and file management logs reached persisted monitoring.
 
@@ -105,4 +105,18 @@ New feature-specific modules, pages, API route, CSS and tests are listed in `git
 - Mohammed must independently cross-test US-25/29/44/73; Ali Slim must review AI-assisted code and evidence. This report does not impersonate either person's approval.
 - Integrate US-45 mock assembly and US-49 grading with the delivered contracts; test real attempt IDs and graded outcomes. E5 event-source validation remains explicitly open.
 - Ali Slim's US-34/35/37/39 automated cross-test evidence is in `CROSS_TEST_ALI_SLIM_SPRINT_4.md`. US-45 independent acceptance awaits that implementation.
-- Teammate PR approval, remote CI, Jira records, merging, deployment, complete sprint demo and any real-content rubric review remain team actions. No push, remote change, Jira update or deployment was performed.
+- Teammate PR approval, remote CI, Jira records, merging, deployment, complete sprint demo and any real-content rubric review remain team actions. The user separately authorized publishing this feature branch after the second-pass checks. No merge, Jira update, deployment, or repository-setting change is included.
+
+## Second implementation pass
+
+The follow-up review reproduced five defects with failing tests before correcting them:
+
+1. **An old extraction could overwrite replacement questions.** A RUNNING record older than 15 minutes was treated as stale, but its actual worker could resume later. New checks compare the file's course/storage/revision and current run under course/file locks before question writes and completion. A paused real-PDF extraction test ages the run, replaces the file, resumes extraction, and verifies `superseded`, unchanged replacement text, and correct rankings. A unit regression also covers takeover by a newer retry.
+2. **Retagging could exhaust a library permanently.** Stale generated items disappeared from eligible reads but still held every unique content hash. Generation now deletes invalidated private items in its transaction before selecting novel tasks. Historical events keep their original topic and correctness with a null generated-item relation. The regression uses all three variants, retags the paper, regenerates all three, and checks preserved history.
+3. **Mock event ID concatenation could merge distinct attempts.** `attempt:part` + `one` collided with `attempt` + `part:one`. Simple existing IDs retain their original keys; ambiguous/long pairs use a framed SHA-256 key. Empty producer IDs and malformed event batches are refused before database operations. A per-student event lock makes concurrent cross-course collisions return the controlled `duplicate_conflict` result.
+4. **A failed staged write could leave partial bytes behind.** Cleanup previously started only after staging returned. Exclusive file handles now establish ownership before writing, close/remove partial files on failure, and leave existing files alone if exclusive creation fails. Tests simulate ENOSPC and EEXIST and verify no database mutation or private error-text logging.
+5. **Removing a moved paper left its former course's counts stale.** File metadata can move a paper while old groups still reference it. Mutations now identify all affected courses, acquire their locks in stable order, recheck memberships, and regroup them atomically. A database regression verifies the old group's stored paper count changes from two to one.
+
+The second pass also validates malformed reusable event inputs at runtime and preserves safe duplicate handling across courses. No new migration, dependency, evaluation threshold or gold-set change was needed. Shared files added to the change list: `lib/exam-processing.ts` and its unit test. Other fixes stay in Ali Slim's feature modules and new regression tests.
+
+Second-pass checks on `0af30df`: **1,074 unit/component tests in 71 files and 129 integration tests in 12 files pass**, as do lint, TypeScript and the unchanged accuracy gate. New focused regressions include the five reproduced defects, malformed event inputs, cross-course delivery conflicts and safe exclusive-file ownership. The fresh production build and all **94 browser tests passed** (4.2 minutes including build), including the unchanged 50/50 extraction and 50/50 retry reliability trials. Local logs are under `reports/sprint4-review-*.log`. Final cleanup found zero Sprint 4 courses, users, faculties, learning events and generated questions; no Sprint 4 upload fixtures remained, and the disposable database server was stopped. The user explicitly authorized pushing `ali_slim_sprint_4` to GitHub after verification; the published commit is reported in the completion response.

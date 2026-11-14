@@ -18,7 +18,7 @@ Two pre-existing test defects were reproduced and corrected before the retest:
 1. Rate-limit windows leaked across integration cases, so later legitimate fixture publications failed with `rate_limited`. Each case now resets the in-memory rate store; the product limit is unchanged and unit tests still test rate limiting.
 2. An anonymity assertion rejected an intentional named post by the same author elsewhere in a mixed feed. The name-leak assertion now inspects anonymous payloads; the raw-ID assertion still inspects the whole payload. The anonymous item and owner/admin storage assertions remain.
 
-Retest: all 13 advice integration cases pass in the full 124-test integration run. All advice unit/rule cases also pass in the unit suite. Missing existing advice log event declarations on main were added so TypeScript and production build work.
+Retest: all 13 advice integration cases pass in the full 129-test second-pass integration run. All advice unit/rule cases also pass in the unit suite. Missing existing advice log event declarations on main were added so TypeScript and production build work.
 
 This does not accept the entire E3 release: moderation, ratings, discussions and anonymity across those not-yet-delivered surfaces need their owners' integration tests. The plan's public-release moderation gate remains applicable.
 

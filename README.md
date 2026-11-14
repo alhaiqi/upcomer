@@ -24,6 +24,7 @@ After pulling: `npx prisma generate`, then apply reviewed migrations with `npx p
 - `getLearningProfile` exposes optional `confidence`, `baselineWeakness`, `correctCount`, and `incorrectCount` alongside the existing fields for US-26/30/31/47. These are heuristic evidence counts, not calibrated mastery probabilities.
 - US-29 uses the actual `checkedPriority` function: exam-paper share times `(1 + 2*weakness)`. Reasons name saved confidence, recorded correct/incorrect counts, the prior and actual score; unknown evidence and invalid inputs are explicit. Historical frequency is not a guarantee of future exams.
 - US-49 calls `recordMockOutcomes(userId, courseId, attemptId, [{ itemId, generatedQuestionId, correct }])` **after** validating ownership and committing rubric-backed grading. This adapter is tested with stored generated items; the real US-49 grading/session integration is not present on this branch. FLASHCARD and AI_INTERACTION are future E5 producer contracts, not released features. Full original US-25 acceptance remains partial until those integrations exist.
+- Mock attempt/item identifiers must be nonempty. Simple existing IDs retain their event keys; separator-bearing or long pairs use a framed hash so different attempts cannot collide. Invalid producer payloads are refused before database work; cross-course event-ID conflicts are serialized per student.
 
 ### New practice questions (US-44)
 
@@ -32,6 +33,7 @@ After pulling: `npx prisma generate`, then apply reviewed migrations with `npx p
 - There are three task variants per source/difficulty. Normalized content hashes prevent exact repeats of historical questions or the student's existing generated tasks. Exhaustion is explicit; no smaller batch is silently returned. Libraries are private to a student/course.
 - Persisted items include stable IDs, topic/difficulty, generator version, source-question relation, source fingerprint, prompt, content hash, and nullable rubric. Source removal/replacement cascades generated items; correction or retagging excludes stale items from eligibility. Generation never changes historical question groups or frequencies.
 - US-45/46/47 should use `getGeneratedPracticeQuestions(userId, courseId, settings?)` to enforce source validity and library privacy, then persist selected item IDs in their own mock-session schema. This branch does not implement another member's session, timer or grading stories. `rubric` is null because source exams have no verified keys; US-49 must flag that limitation instead of inventing a grade.
+- When generation follows a source correction or retag, stale private items are removed within the generation transaction so their unique hashes cannot permanently block regeneration. Outcome snapshots survive with a null item relation. Mock attempts should snapshot their question text and use nullable source relations, as removal/replacement can invalidate library items.
 
 ### File replacement/removal (US-73)
 
@@ -39,6 +41,7 @@ After pulling: `npx prisma generate`, then apply reviewed migrations with `npx p
 - New bytes are staged under an exclusive UUID path inside verified canonical storage. Under the course and processing locks, the service checks the displayed version and active processing, then replaces/deletes questions and regroups in the **same transaction**. A grouping failure rolls back all database changes and removes staged bytes.
 - Removal requires confirmation and updates ranks/source links atomically. Generated items derived from deleted questions disappear; historical outcome/correction/report snapshots remain. Recent running processing attempts are refused. Racing/stale forms cannot overwrite a newer file.
 - Old physical bytes are removed after commit only if no other record references them. Failed cleanup is logged as an error and shown to the admin; source records and rankings already reflect the committed mutation. Existing filesystem containment checks remain enforced. Original-file responses use `private, no-store` so replacements do not reuse stale cached bytes.
+- Partial staged writes are closed and removed, while failed exclusive creation never deletes an existing file. Mutations also rebuild any former course groups still containing a moved paper. Processing commits verify the source revision and current attempt under course/file locks; an old or expired worker returns `superseded` instead of restoring obsolete content.
 
 ### Monitoring and verification
 
