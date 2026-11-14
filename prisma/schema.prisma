@@ -30,6 +30,8 @@ model Term {
   id        String       @id @default(cuid())
   name      String       @unique
   files     CourseFile[]
+  // Added for US-34: advice scoped to a session (term).
+  advice    Advice[]
   createdAt DateTime     @default(now())
   updatedAt DateTime     @updatedAt
 }
@@ -60,6 +62,10 @@ model User {
   closedReports       QuestionReport[]     @relation("ClosedQuestionReports")
   learningTopics      LearningTopic[]
   questionProgress    QuestionProgress[]
+
+  // Added for US-34: advice a student wrote, and advice an admin removed.
+  advice              Advice[]             @relation("AdviceAuthored")
+  removedAdvice       Advice[]             @relation("AdviceRemoved")
 
   createdAt           DateTime             @default(now())
   updatedAt           DateTime             @updatedAt
@@ -120,6 +126,8 @@ model Course {
   questionReports  QuestionReport[]
   learningTopics   LearningTopic[]
   questionProgress QuestionProgress[]
+  // Added for US-34.
+  advice           Advice[]
   createdAt        DateTime           @default(now())
   updatedAt        DateTime           @updatedAt
 
@@ -181,6 +189,8 @@ model CourseFile {
   reviewedAt       DateTime?
   questions        Question[]
   processingRuns   FileProcessingRun[]
+  // Added for US-34: advice scoped to an exam paper.
+  advice           Advice[]
   createdAt        DateTime            @default(now())
   updatedAt        DateTime            @updatedAt
 
@@ -306,6 +316,8 @@ model QuestionGroup {
   questions      Question[]
   reports        QuestionReport[]
   progress       QuestionProgress[]
+  // Added for US-34: advice scoped to a question.
+  advice         Advice[]
   createdAt      DateTime           @default(now())
   updatedAt      DateTime           @updatedAt
 
@@ -404,5 +416,68 @@ model QuestionProgress {
 
   @@unique([userId, groupId])
   @@index([userId, courseId])
+  @@index([groupId])
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Advice from previous students (US-34, US-35, US-37, US-39). Added in migration 20261102000000_advice.
+// ---------------------------------------------------------------------------------------------------------------------
+
+// What a piece of advice is about (US-34). COURSE is advice for the whole course.
+enum AdviceScopeKind {
+  COURSE
+  EXAM
+  SESSION
+  TOPIC
+  QUESTION
+}
+
+// REMOVED advice is never shown to students or found by search; an admin removes it after a report (US-77).
+enum AdviceStatus {
+  VISIBLE
+  REMOVED
+}
+
+// One piece of advice from a student to later students of a course (US-34). The author is always stored, so admins can
+// handle abuse, but is never sent to student-facing views when isAnonymous is set (US-37); see lib/advice.ts.
+// The scope's target (exam paper, session/term, question group) can be deleted later: its ID then becomes null and
+// scopeLabel still says what the advice was about.
+model Advice {
+  id            String          @id @default(cuid())
+  courseId      String
+  course        Course          @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  // Null if the author's account was deleted.
+  authorId      String?
+  author        User?           @relation("AdviceAuthored", fields: [authorId], references: [id], onDelete: SetNull)
+  isAnonymous   Boolean         @default(false)
+  scopeKind     AdviceScopeKind
+  // Readable copy of the scope (exam title, term name, topic, start of the question).
+  scopeLabel    String
+  fileId        String?
+  file          CourseFile?     @relation(fields: [fileId], references: [id], onDelete: SetNull)
+  termId        String?
+  term          Term?           @relation(fields: [termId], references: [id], onDelete: SetNull)
+  groupId       String?
+  group         QuestionGroup?  @relation(fields: [groupId], references: [id], onDelete: SetNull)
+  // Same normalization as LearningTopic.topicKey, so topic filters match case and spacing loosely.
+  topicKey      String?
+  topic         String?
+  title         String
+  body          String
+  // US-35: an HTTPS link only, validated by parseResourceLink in lib/advice-rules.ts.
+  resourceUrl   String?
+  resourceTitle String?
+  status        AdviceStatus    @default(VISIBLE)
+  removedAt     DateTime?
+  removedById   String?
+  removedBy     User?           @relation("AdviceRemoved", fields: [removedById], references: [id], onDelete: SetNull)
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  @@index([courseId, status, createdAt])
+  @@index([courseId, topicKey])
+  @@index([authorId])
+  @@index([fileId])
+  @@index([termId])
   @@index([groupId])
 }
