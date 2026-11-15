@@ -93,7 +93,7 @@ The seed is repeatable and includes one record for a deliberately missing physic
 | `/courses/:courseId/materials` | Materials for that course |
 | `/courses/:courseId/exam` | The Upcomer Exam: every distinct question once, most likely first. Logged-in students can report a question under it, mark questions done and continue where they stopped (US-21), and switch to their personal order (US-28); optional `reported`, `report_error`, `progress_error`, `at`, and `order=personal` query parameters |
 | `/courses/:courseId/confidence` | Rate your confidence in each of the course's topics, 1 to 5 or Skip (US-24); requires a session. Optional `saved` and `error` query parameters |
-| `/courses/:courseId/topics` | Your topics in that course: your strongest and weakest topics, with what each rests on (US-26); requires a session |
+| `/courses/:courseId/topics` | Your topics in that course: the topic to study next, with the reason and links to practise (US-30), then your strongest and weakest topics, with what each rests on (US-26); requires a session |
 | `/courses/:courseId/questions` | The course's question bank, most frequent first; optional `q`, `year`, `termId`, `examType`, and `professorId` query parameters |
 | `/files/:fileId` | Original bytes for a stored file record |
 | `/admin/uploads` | Admin upload menu |
@@ -358,7 +358,7 @@ After pulling, run `npx prisma generate` and `npm run db:migrate`. Two migration
 
 ### Strongest and weakest topics (US-26, Mustafa Ergaibi, Sprint 4)
 
-- **`/courses/:courseId/topics`** ("Your topics"; logged-in students, a visitor is sent to log in and comes back; an unknown course is not found) shows the student's strongest and weakest topics in that course. The confidence page and, for logged-in students, the Upcomer Exam link to it. US-30 and US-32 can add their own sections to the page, built on the `ranked` list that `getTopicStrengths` already returns.
+- **`/courses/:courseId/topics`** ("Your topics"; logged-in students, a visitor is sent to log in and comes back; an unknown course is not found) shows the student's strongest and weakest topics in that course. The confidence page and, for logged-in students, the Upcomer Exam link to it. US-30 adds the "Study next" section above it (see below); US-32 can add its own.
 - **One course only.** `getTopicStrengths(userId, courseId)` in `lib/topic-strengths.ts` reads the stored `weakness` through `getLearningProfile` (never recomputed) and the course's published exam-paper topics. Another course's or another student's profile is never read.
 - **Evidence rule.** A topic counts only with a saved confidence rating or at least one recorded practice outcome (`correctCount + incorrectCount > 0`). A skipped, never-practised topic is never a strength or a weakness. A profile topic that is no longer on a published exam paper of the course is left out, and so is a row whose stored weakness is not between 0 and 1 (counted in `topic_strengths_invalid_data`).
 - **Order** (`lib/topic-strengths-rules.ts`, pure): weakness descending, then exam frequency (published papers with the topic) descending, then topic name. Weaknesses within `1e-9` are a tie.
@@ -368,6 +368,21 @@ After pulling, run `npx prisma generate` and `npm run db:migrate`. Two migration
 - **Monitoring:** `topic_strengths_retrieval_failed` and `topic_strengths_invalid_data` in the events table. IDs, the failed read, a count, and error types only; topics are never logged. A failed read is logged once and the page shows the generic error page.
 - **Tests:** `tests/unit/topic-strengths.test.ts`, `tests/unit/topic-strengths-pages.test.tsx`, `tests/integration/topic-strengths.test.ts` (isolation between courses and students; outcomes through `recordLearningEvents` move a topic between strongest and weakest), and `tests/e2e/topic-strengths.spec.ts`. They create their own faculty, courses and students and delete them.
 - **Shared files changed:** `lib/logger.ts` (two events), `app/courses/[courseId]/confidence/page.tsx` (two links), `app/courses/[courseId]/exam/page.tsx` (one link for logged-in students), and `README.md`.
+
+### Study next (US-30, Mustafa Ergaibi, Sprint 4)
+
+- **The "Study next" section** at the top of `/courses/:courseId/topics` recommends one topic to study next in that course, says why, and links to practice.
+- **Same rule as the personal order (US-27).** `recommendNext` in `lib/study-next-rules.ts` (pure) gives every topic of the course's published exam papers the priority `checkedPriority(paperCount, totalPapers, weakness)`: exam share × (1 + `WEAKNESS_WEIGHT` × weakness). There is no second formula. `paperCount` is the published exam papers tagged with the topic; `totalPapers` is all published exam papers of the course, tagged or not, as on the Upcomer Exam.
+- **Weakness** is the stored weakness of the student's profile row in this course. A topic with no row (never rated, never practised) uses `NEUTRAL_WEAKNESS`, so a frequent untouched topic can be recommended and a student with no profile still gets a recommendation. A profile topic that is no longer on a published exam paper is ignored. A stored weakness outside 0–1 is clamped by `checkedPriority`, not dropped, and counted in `study_recommendation_invalid_inputs`.
+- **Order:** priority descending, then exam frequency descending, then topic name. Priorities within `1e-9` are a tie. The first topic is the recommendation; exactly one topic is recommended. With 5 papers: DNS (1 paper, weakness 1) = 0.6 beats TCP (2 papers, weakness 0) = 0.4; an untouched TCP in 3 papers = 1.2 beats that DNS.
+- **Practice updates it.** `getStudyNext(userId, courseId)` in `lib/study-next.ts` reads on every page load and nothing is cached, so outcomes recorded through `recordLearningEvents` show the next time the page opens. The page makes one read (`readTopicInputs` in `lib/topic-strengths.ts`) and gives it to this section and to US-26's.
+- **The reason** is one short line from the inputs, for example "In 2 of this course's 5 published exam papers. Rated 2 of 5, 0 correct and 3 incorrect." or "… Not rated and no practice recorded, so a neutral weakness is used." "How this is worked out" holds `explainPriority`'s text for the topic, unchanged. Nothing claims mastery, and the section says it is not a guarantee of what the next exam will cover.
+- **Next actions:** "Practise questions" (`/courses/:courseId/practice`) and "See the Upcomer Exam in your personal order" (`/courses/:courseId/exam?order=personal`), plus "Rate your topics" for an unrated topic. Neither page can show one topic only, so the links open the pages themselves. The practice page links back with "Your topics".
+- **No topics:** a course whose published exam papers have no topics shows "This course's exam papers have no topics yet, so there is no topic to recommend." and no links.
+- **US-32 (not built):** `getStudyNext` returns every candidate in order as `ranked`, and the recommendation is `ranked[0]`. Covered topics can be filtered out of that list before the pick.
+- **Monitoring:** `study_recommendation_failed` and `study_recommendation_invalid_inputs` in the events table. IDs, the failing step, a count, reason codes, and error types only; topics are never logged. A failed shared read fails both sections, so that page load also logs `topic_strengths_retrieval_failed`.
+- **Tests:** `tests/unit/study-next.test.ts`, `tests/unit/study-next-pages.test.tsx`, `tests/integration/study-next.test.ts` (incorrect outcomes through `recordLearningEvents` change the recommended topic and correct ones change it back; another course or student never affects it), and `tests/e2e/study-next.spec.ts`. They create their own faculty, courses and students and delete them.
+- **Shared files changed:** `lib/logger.ts` (two events), `app/courses/[courseId]/practice/page.tsx` (one "Your topics" link), and `README.md`.
 
 ### Known limitations
 
@@ -673,6 +688,8 @@ The levels live in one table, `EVENT_LEVELS` in `lib/logger.ts`, and TypeScript 
 | Mustafa Ergaibi (Sprint 3) | `topic_confidence_save_failed` | error | `userId`, `courseId`, `errorType` |
 | Mustafa Ergaibi (Sprint 4) | `topic_strengths_retrieval_failed` | error | `userId`, `courseId`, `source` (`profile`, `course_topics`, `selection`), `errorType` (never a topic); one line per failed page load |
 | Mustafa Ergaibi (Sprint 4) | `topic_strengths_invalid_data` | warn | `userId`, `courseId`, `invalidTopics` (a count, never a topic); at most one line per page load |
+| Mustafa Ergaibi (Sprint 4) | `study_recommendation_failed` | error | `userId`, `courseId`, `step` (`profile`, `course_topics`, `selection`), `errorType` (never a topic); one line per failed page load |
+| Mustafa Ergaibi (Sprint 4) | `study_recommendation_invalid_inputs` | warn | `userId`, `courseId`, `affectedTopics` (a count, never a topic), `reasons` (the `checkedPriority` reason codes); at most one line per page load |
 
 ### What is never logged
 
