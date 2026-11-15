@@ -5,7 +5,8 @@ import { readTopicInputs, TopicReadFailed, type TopicInputs } from "@/lib/topic-
 // US-30: the topic a student should study next in one course, from that course's learning profile (never another
 // course's, never another student's) and its published exam papers. Read fresh on every call, so practice recorded
 // through recordLearningEvents (US-25) shows on the next page load. Nothing here checks the caller: the page calls
-// requireUser() first and passes the session user's ID. Topics are never logged.
+// requireUser() first and passes the session user's ID. Topics the student marked as covered (US-32) are left out. Topics
+// are never logged.
 
 const errorType = (error: unknown) => (error instanceof Error ? error.name : "Unknown");
 
@@ -13,8 +14,8 @@ const errorType = (error: unknown) => (error instanceof Error ? error.name : "Un
 export async function getStudyNext(userId: string, courseId: string, inputs: Promise<TopicInputs> = readTopicInputs(userId, courseId)): Promise<StudyNext> {
   let result: StudyNext;
   try {
-    const { profile, courseTopics, totalPapers } = await inputs;
-    result = recommendNext(profile, courseTopics, totalPapers);
+    const { profile, courseTopics, totalPapers, covered } = await inputs;
+    result = recommendNext(profile, courseTopics, totalPapers, covered);
   } catch (error) {
     // One line per failed page load: the step that failed and the error's type, never its message.
     const failure = error instanceof TopicReadFailed ? error : null;

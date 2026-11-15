@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { LearningProfile, ProfileTopic } from "@/lib/learning-profile";
 
-const { courseFile, learningTopic } = vi.hoisted(() => ({ courseFile: { findMany: vi.fn() }, learningTopic: { findMany: vi.fn() } }));
-vi.mock("@/lib/db", () => ({ db: { courseFile, learningTopic } }));
+// No topic is marked as covered (US-32, tested in topic-covered.test.ts).
+const { courseFile, learningTopic, coveredTopic } = vi.hoisted(() => ({ courseFile: { findMany: vi.fn() }, learningTopic: { findMany: vi.fn() }, coveredTopic: { findMany: async () => [] } }));
+vi.mock("@/lib/db", () => ({ db: { courseFile, learningTopic, coveredTopic } }));
 import { NEUTRAL_WEAKNESS } from "@/lib/learning-profile";
 import { checkedPriority, explainPriority, PRIORITY_TIE, WEAKNESS_WEIGHT } from "@/lib/personal-order";
 import { getStudyNext } from "@/lib/study-next";
@@ -207,7 +208,7 @@ describe("getStudyNext", () => {
   });
   it("names the selection step when the rules themselves fail", async () => {
     // A profile that is not a Map makes the selection throw.
-    const broken = Promise.resolve({ profile: null as never, courseTopics: new Map([["secret routing", { topic: "Secret Routing", paperCount: 1 }]]), totalPapers: 1 });
+    const broken = Promise.resolve({ profile: null as never, courseTopics: new Map([["secret routing", { topic: "Secret Routing", paperCount: 1 }]]), totalPapers: 1, covered: new Set<string>() });
     await expect(getStudyNext("student-1", "course-a", broken)).rejects.toThrow(TypeError);
     expect(logged()).toMatchObject([{ event: "study_recommendation_failed", step: "selection", errorType: "TypeError", userId: "student-1", courseId: "course-a" }]);
     expect(JSON.stringify(logged())).not.toMatch(/secret|routing/i);

@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { LearningProfile, ProfileTopic } from "@/lib/learning-profile";
 
-const { courseFile, learningTopic } = vi.hoisted(() => ({ courseFile: { findMany: vi.fn() }, learningTopic: { findMany: vi.fn() } }));
-vi.mock("@/lib/db", () => ({ db: { courseFile, learningTopic } }));
+// No topic is marked as covered (US-32, tested in topic-covered.test.ts).
+const { courseFile, learningTopic, coveredTopic } = vi.hoisted(() => ({ courseFile: { findMany: vi.fn() }, learningTopic: { findMany: vi.fn() }, coveredTopic: { findMany: async () => [] } }));
+vi.mock("@/lib/db", () => ({ db: { courseFile, learningTopic, coveredTopic } }));
 import { getTopicStrengths } from "@/lib/topic-strengths";
 import { describeEvidence, hasEvidence, MAX_LISTED, selectStrengths, strengthMessage, WEAKNESS_TIE, type CourseTopicCount } from "@/lib/topic-strengths-rules";
 

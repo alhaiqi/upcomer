@@ -102,7 +102,11 @@ type LogEvent =
   | "topic_strengths_retrieval_failed"
   | "topic_strengths_invalid_data"
   | "study_recommendation_failed"
-  | "study_recommendation_invalid_inputs";
+  | "study_recommendation_invalid_inputs"
+  | "topic_covered_saved"
+  | "topic_covered_refused"
+  | "topic_covered_rate_limited"
+  | "topic_covered_save_failed";
 
 
 export type { LogEvent };
@@ -239,6 +243,12 @@ export const EVENT_LEVELS: Record<LogEvent, LogLevel> = {
   // codes, and error types only; topics are never logged.
   study_recommendation_failed: "error",
   study_recommendation_invalid_inputs: "warn",
+  // Mustafa Ergaibi (Sprint 4): recommendations, topics marked as already covered (US-32). IDs, the new state, reason
+  // codes, and error types only; topics are never logged.
+  topic_covered_saved: "info",
+  topic_covered_refused: "warn",
+  topic_covered_rate_limited: "warn",
+  topic_covered_save_failed: "error",
 
 };
 
