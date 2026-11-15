@@ -444,6 +444,20 @@ The feed is the advice page at `/courses/:courseId/advice` with no search or fil
 - **Tests:** `tests/unit/advice-feed.test.ts`, `tests/unit/advice-feed-page.test.tsx`, `tests/integration/advice-feed.test.ts`, `tests/e2e/advice-feed.spec.ts`, the feed in `npm run availability` (with a correctness check), and `npm run load -- advice-feed`. Details and results: `ADVICE_FEED_REPORT.md`.
 - **Shared files changed:** `lib/advice.ts` (the guard, the cache, the limit; `searchAdvice` keeps its signature), `app/courses/[courseId]/advice/page.tsx` (the limit check), `tests/unit/advice.test.ts` (one line: reset the cache between tests), `lib/logger.ts` (one event), `tests/availability/run.ts`, `.env.example`, and `README.md`.
 
+### Editing and deleting one's own advice (US-36, Mohammed Al-Haiqi, Sprint 4)
+
+After pulling, run `npx prisma generate` and `npx prisma migrate deploy`. One migration is new: `20261116000002_advice_edited` (one nullable column, `Advice.editedAt`).
+
+- **Only the author.** Each of the author's posts on `/courses/:courseId/advice` has "Edit or delete your advice" (from `PublicAdvice.isMine`), which opens `/courses/:courseId/advice/:adviceId/edit`. Every read and write in `lib/advice-changes.ts` matches the advice by its ID, the session user as author, and `VISIBLE` together, so another student's advice, an admin's attempt, advice of another course, and advice that does not exist are all the same "not found" (nobody learns who wrote an anonymous post by trying).
+- **Editing** changes the title, the text, and the link with its name, under the same rules as publishing (`checkAdviceDraft`). It never changes the scope or the anonymity; anonymous advice stays anonymous. Saving unchanged advice writes nothing. Edited advice shows "edited" in the feed.
+- **Deleting** marks the advice `REMOVED` by its author (`removedById`). No student sees it again, in the feed or a search, and it cannot be edited back. It is kept so a report about it (US-43) can still be checked.
+- **Races:** the write matches the author and `VISIBLE` again, so an edit never brings back advice that was deleted or removed in between.
+- **Caching:** every change calls `invalidateCourseAdvice`, so the feed shows it at once.
+- **DoS:** `ADVICE_CHANGE_RATE_LIMIT_PER_MINUTE` edits and deletes per student per minute (default 20).
+- **Logs and responsiveness:** `operation_timed` lines `advice_own_read`, `advice_edit`, `advice_delete`, and the `advice_edited`, `advice_deleted`, `advice_change_*` events. The text, title, and link are never logged.
+- **Tests:** `tests/unit/advice-changes.test.ts`, `tests/unit/advice-edit-page.test.tsx`, `tests/integration/advice-changes.test.ts`, `tests/e2e/advice-changes.spec.ts`, the two edit APIs in `npm run availability`, and `npm run load -- advice-edit`. Details: `ADVICE_CHANGES_REPORT.md`.
+- **Shared files changed:** `prisma/schema.prisma` (one column), the migration, `lib/advice.ts` (`editedAt` in the select, `PublicAdvice.edited`), `components/advice-list.tsx` (the edit link and "edited"), `app/courses/[courseId]/advice/page.tsx` (the notices), `lib/logger.ts` (five events), the advice unit test fixtures (`editedAt: null`), `tests/availability/run.ts`, `.env.example`, and `README.md`.
+
 ### Advice from previous students (US-34, US-35, US-37, US-39): open issues
 
 Built by Ali Shammakh at `/courses/:courseId/advice` (`lib/advice.ts`, `lib/advice-rules.ts`), now owned by Mustafa Ergaibi. A review against the stories found no acceptance failure in the code: scopes are checked against the course, only `https://` links are accepted, an anonymous post never carries its author's name or ID to students, and search and filters stay inside the course. These issues are open and **not fixed yet**:
@@ -455,7 +469,7 @@ Built by Ali Shammakh at `/courses/:courseId/advice` (`lib/advice.ts`, `lib/advi
 5. `advice_published` logs the author's `userId` with the `adviceId` for anonymous posts too. Only admins read logs and US-37 keeps the author for moderation, but it needs a decision.
 6. The exam filter finds advice scoped to that exam only, not advice on one of its questions.
 7. The publish form offers only the 100 most frequent questions of a course.
-8. Nothing removes or edits advice yet (the `REMOVED` status has no caller); that belongs to other stories.
+8. Nothing removes or edits advice yet (the `REMOVED` status has no caller); that belongs to other stories. *(Authors edit and delete since US-36, above.)*
 
 ### Known limitations
 
@@ -773,6 +787,9 @@ The levels live in one table, `EVENT_LEVELS` in `lib/logger.ts`, and TypeScript 
 | Sprint 4, mock exams (US-45) | `mock_exam_save_refused` | warn | `userId`, `mockExamId`, `submit`, `reason` (`not_found`, `already_submitted`, `answer_too_long`) |
 | Sprint 4, mock exams (US-45) | `mock_exam_save_failed` | error | `userId`, `mockExamId`, `submit`, `errorType`, `errorCode` |
 | Mohammed Al-Haiqi (Sprint 4, US-38) | `advice_feed_rate_limited` | warn | `userId`, `retryAfterSeconds`; the student opened advice pages more than `ADVICE_FEED_RATE_LIMIT_PER_MINUTE` times in a minute |
+| Mohammed Al-Haiqi (Sprint 4, US-36) | `advice_edited`, `advice_deleted` | info | `adviceId`, `courseId`, `userId`, `hasLink` (edits); never the title, text, or link |
+| Mohammed Al-Haiqi (Sprint 4, US-36) | `advice_change_refused`, `advice_change_rate_limited` | warn | `adviceId`, `userId`, `operation` (`edit`, `delete`), `reason` (`not_found`, `title_required`, `title_too_long`, `body_required`, `body_too_long`, `link_invalid`, `link_title_too_long`) or `retryAfterSeconds` |
+| Mohammed Al-Haiqi (Sprint 4, US-36) | `advice_change_failed` | error | `adviceId`, `userId`, `operation`, `errorType` |
 
 ### What is never logged
 
