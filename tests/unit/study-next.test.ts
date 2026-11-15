@@ -5,7 +5,9 @@ const { courseFile, learningTopic } = vi.hoisted(() => ({ courseFile: { findMany
 vi.mock("@/lib/db", () => ({ db: { courseFile, learningTopic } }));
 import { NEUTRAL_WEAKNESS } from "@/lib/learning-profile";
 import { checkedPriority, explainPriority, PRIORITY_TIE, WEAKNESS_WEIGHT } from "@/lib/personal-order";
+import { getStudyNext } from "@/lib/study-next";
 import { NO_TOPICS_TO_RECOMMEND, recommendNext } from "@/lib/study-next-rules";
+import { getTopicStrengths, readTopicInputs } from "@/lib/topic-strengths";
 import type { CourseTopicCount } from "@/lib/topic-strengths-rules";
 
 // US-30: the topic to study next follows weakness and exam importance by the personal order's own priority rule.
@@ -149,5 +151,72 @@ describe("the reason", () => {
       expect(topic.reason).not.toMatch(/master|will be on|guarantee/i);
       expect(topic.explanation).not.toMatch(/mastered|will be on/i);
     }
+  });
+});
+
+describe("getStudyNext", () => {
+  let errors: ReturnType<typeof vi.spyOn>;
+  const logged = () => errors.mock.calls.map(call => JSON.parse(String(call[0])));
+  const row = (topicKey: string, weakness: number, confidence: number | null = 3) => ({ topicKey, topic: topicKey, weakness, confidence, baselineWeakness: null, correctCount: 0, incorrectCount: 0 });
+  class DatabaseDown extends Error { name = "DatabaseDown"; }
+  beforeEach(() => {
+    errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    // Newest first, as the query orders them. Two TCP papers, one Secret Routing paper, and two papers without a topic.
+    courseFile.findMany.mockReset().mockResolvedValue([{ topic: "Tcp " }, { topic: "Secret Routing" }, { topic: "TCP" }, { topic: "  " }, { topic: null }]);
+    learningTopic.findMany.mockReset().mockResolvedValue([row("tcp", 0), row("secret routing", 1, 1)]);
+  });
+
+  it("reads this student's profile in this course and all the course's published exam papers", async () => {
+    const result = await getStudyNext("student-1", "course-a");
+    expect(learningTopic.findMany.mock.calls[0][0].where).toEqual({ userId: "student-1", courseId: "course-a" });
+    // No topic filter: papers without a topic count towards the total.
+    expect(courseFile.findMany.mock.calls[0][0].where).toEqual({ courseId: "course-a", category: "EXAM", status: "PUBLISHED" });
+    // Secret Routing 1/5 × 3 = 0.6 against TCP 2/5 × 1 = 0.4.
+    expect(result.recommended).toMatchObject({ topicKey: "secret routing", paperCount: 1, totalPapers: 5 });
+    expect(result.ranked[1]).toMatchObject({ topicKey: "tcp", topic: "Tcp", paperCount: 2, totalPapers: 5 });
+    expect(logged()).toEqual([]);
+  });
+  it("reads again on every call, so a new weakness changes the recommendation", async () => {
+    expect((await getStudyNext("student-1", "course-a")).recommended!.topicKey).toBe("secret routing");
+    learningTopic.findMany.mockResolvedValue([row("tcp", 0.9), row("secret routing", 1, 1)]);
+    expect((await getStudyNext("student-1", "course-a")).recommended!.topicKey).toBe("tcp");
+    expect(learningTopic.findMany).toHaveBeenCalledTimes(2);
+  });
+  it("shares one read with the strongest and weakest topics when given it", async () => {
+    const inputs = readTopicInputs("student-1", "course-a");
+    const [next, strengths] = await Promise.all([getStudyNext("student-1", "course-a", inputs), getTopicStrengths("student-1", "course-a", inputs)]);
+    expect(next.state).toBe("ok");
+    expect(strengths.state).toBe("ok");
+    expect(courseFile.findMany).toHaveBeenCalledTimes(1);
+    expect(learningTopic.findMany).toHaveBeenCalledTimes(1);
+  });
+  it("logs a failed recommendation once with IDs, the failing step, and the error type, never a topic, and rethrows", async () => {
+    courseFile.findMany.mockRejectedValue(new DatabaseDown("could not read Secret Routing"));
+    await expect(getStudyNext("student-1", "course-a")).rejects.toThrow(DatabaseDown);
+    const lines = logged().filter(line => line.event === "study_recommendation_failed");
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({ level: "error", userId: "student-1", courseId: "course-a", step: "course_topics", errorType: "DatabaseDown" });
+    expect(JSON.stringify(logged())).not.toMatch(/secret|routing|tcp/i);
+
+    errors.mockClear();
+    courseFile.findMany.mockResolvedValue([{ topic: "TCP" }]);
+    learningTopic.findMany.mockRejectedValue(new DatabaseDown("could not read Secret Routing"));
+    await expect(getStudyNext("student-1", "course-a")).rejects.toThrow(DatabaseDown);
+    expect(logged().filter(line => line.event === "study_recommendation_failed")).toMatchObject([{ step: "profile", errorType: "DatabaseDown" }]);
+    expect(JSON.stringify(logged())).not.toMatch(/secret|routing|tcp/i);
+  });
+  it("names the selection step when the rules themselves fail", async () => {
+    // A profile that is not a Map makes the selection throw.
+    const broken = Promise.resolve({ profile: null as never, courseTopics: new Map([["secret routing", { topic: "Secret Routing", paperCount: 1 }]]), totalPapers: 1 });
+    await expect(getStudyNext("student-1", "course-a", broken)).rejects.toThrow(TypeError);
+    expect(logged()).toMatchObject([{ event: "study_recommendation_failed", step: "selection", errorType: "TypeError", userId: "student-1", courseId: "course-a" }]);
+    expect(JSON.stringify(logged())).not.toMatch(/secret|routing/i);
+  });
+  it("logs invalid priority inputs once per read, as a count and reason codes", async () => {
+    learningTopic.findMany.mockResolvedValue([row("tcp", 7), row("secret routing", Number.NaN)]);
+    const result = await getStudyNext("student-1", "course-a");
+    expect(result.state).toBe("ok");
+    expect(logged()).toMatchObject([{ event: "study_recommendation_invalid_inputs", level: "warn", userId: "student-1", courseId: "course-a", affectedTopics: "2", reasons: "invalid_weakness" }]);
+    expect(JSON.stringify(logged())).not.toMatch(/secret|routing|tcp/i);
   });
 });

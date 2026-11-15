@@ -100,7 +100,9 @@ type LogEvent =
   | "topic_confidence_rate_limited"
   | "topic_confidence_save_failed"
   | "topic_strengths_retrieval_failed"
-  | "topic_strengths_invalid_data";
+  | "topic_strengths_invalid_data"
+  | "study_recommendation_failed"
+  | "study_recommendation_invalid_inputs";
 
 
 export type { LogEvent };
@@ -233,6 +235,10 @@ export const EVENT_LEVELS: Record<LogEvent, LogLevel> = {
   // error types only; topics are never logged.
   topic_strengths_retrieval_failed: "error",
   topic_strengths_invalid_data: "warn",
+  // Mustafa Ergaibi (Sprint 4): recommendations, what to study next (US-30). IDs, the failing step, a count, reason
+  // codes, and error types only; topics are never logged.
+  study_recommendation_failed: "error",
+  study_recommendation_invalid_inputs: "warn",
 
 };
 
