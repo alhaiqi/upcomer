@@ -13,7 +13,9 @@ const mocks = vi.hoisted(() => ({
 vi.mock("next/navigation", () => ({ notFound: mocks.notFound, redirect: mocks.redirect }));
 vi.mock("@/lib/auth", () => ({ requireUser: mocks.requireUser, getCurrentUser: mocks.getCurrentUser }));
 vi.mock("@/lib/courses", () => ({ getCourseById: mocks.getCourseById }));
-vi.mock("@/lib/topic-strengths", () => ({ getTopicStrengths: mocks.getTopicStrengths }));
+// The page's one shared read, and the "Study next" section (US-30, tested in study-next-pages.test.tsx), are stubbed.
+vi.mock("@/lib/topic-strengths", () => ({ getTopicStrengths: mocks.getTopicStrengths, readTopicInputs: vi.fn(async () => "inputs") }));
+vi.mock("@/lib/study-next", () => ({ getStudyNext: vi.fn(async () => ({ state: "no_topics", recommended: null, ranked: [], invalidTopics: 0, reasons: [] })) }));
 vi.mock("@/lib/topic-confidence", () => ({ getCourseTopics: mocks.getCourseTopics, getTopicConfidence: mocks.getTopicConfidence, saveTopicConfidence: vi.fn() }));
 vi.mock("@/lib/consolidated-exam", () => ({ getConsolidatedExam: mocks.getConsolidatedExam }));
 vi.mock("@/lib/question-progress", () => ({ getCourseProgress: mocks.getCourseProgress }));
@@ -60,7 +62,7 @@ describe("the course topics page (US-26)", () => {
   });
   it("reads the session student's strengths in this course", async () => {
     await page();
-    expect(mocks.getTopicStrengths).toHaveBeenCalledWith("student-1", "course-a");
+    expect(mocks.getTopicStrengths).toHaveBeenCalledWith("student-1", "course-a", expect.any(Promise));
   });
   it("lists the strongest and the weakest topics, each with what it rests on", async () => {
     const html = await page();
