@@ -22,7 +22,7 @@ export default async function CourseTopicsPage({ params, searchParams }: {
   const user = await requireUser(`/courses/${encodeURIComponent(courseId)}/topics`);
   const course = await getCourseById(courseId);
   if (!course) notFound();
-  // One read for both sections, fresh on every page load, so recorded practice shows the next time the page opens.
+  // One read for every section, fresh on every page load, so recorded practice shows the next time the page opens.
   const inputs = readTopicInputs(user.id, courseId);
   const [next, strengths] = await Promise.all([getStudyNext(user.id, courseId, inputs), getTopicStrengths(user.id, courseId, inputs)]);
   // The read succeeded, or the line above has thrown. Every topic of the course in name order, with its covered state.
