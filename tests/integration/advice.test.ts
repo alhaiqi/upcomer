@@ -10,6 +10,9 @@ beforeEach(() => resetRateLimits());
 // Advice (US-34, US-35, US-37, US-39) against a real, migrated database. Every record is created here with a unique suffix
 // and deleted in afterAll, so the test can run next to other data. The services take the user ID directly, so no session is needed.
 
+// This file publishes more advice than the default per-hour limit (20) allows.
+process.env.ADVICE_RATE_LIMIT_PER_HOUR = "1000";
+
 const run = randomUUID().slice(0, 8);
 const ids = {} as {
   faculty: string; courseA: string; courseB: string; term: string; examA: string; examB: string; pendingExam: string;

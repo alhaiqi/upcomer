@@ -69,6 +69,8 @@ model User {
   // Added for US-34: advice a student wrote, and advice an admin removed.
   advice              Advice[]             @relation("AdviceAuthored")
   removedAdvice       Advice[]             @relation("AdviceRemoved")
+  // Added for US-45: the mock exams a student generated.
+  mockExams           MockExam[]
 
   createdAt           DateTime             @default(now())
   updatedAt           DateTime             @updatedAt
@@ -134,6 +136,8 @@ model Course {
   generatedQuestions GeneratedPracticeQuestion[]
   // Added for US-34.
   advice           Advice[]
+  // Added for US-45.
+  mockExams        MockExam[]
   createdAt        DateTime           @default(now())
   updatedAt        DateTime           @updatedAt
 
@@ -326,6 +330,8 @@ model QuestionGroup {
   progress       QuestionProgress[]
   // Added for US-34: advice scoped to a question.
   advice         Advice[]
+  // Added for US-45: mock exam questions drawn from this group.
+  mockExamQuestions MockExamQuestion[]
   createdAt      DateTime           @default(now())
   updatedAt      DateTime           @updatedAt
 
@@ -510,6 +516,7 @@ model Advice {
   @@index([groupId])
 }
 
+<<<<<<< HEAD
 enum LearningSource {
   QUESTION_BANK
   MOCK_EXAM
@@ -573,4 +580,73 @@ model GeneratedPracticeQuestion {
   @@unique([userId, courseId, contentHash])
   @@index([userId, courseId, difficulty])
   @@index([sourceQuestionId])
+=======
+// ---------------------------------------------------------------------------------------------------------------------
+// Configurable mock exams (US-45). Added in migration 20261103000000_mock_exams.
+// ---------------------------------------------------------------------------------------------------------------------
+
+// EASY, MEDIUM and HARD are windows of the course's questions sorted by an estimated complexity (question length and number
+// of parts; past papers carry no difficulty rating). MIXED spreads the picks over the whole range. See lib/mock-exam-rules.ts.
+enum MockExamDifficulty {
+  EASY
+  MEDIUM
+  HARD
+  MIXED
+}
+
+// IN_PROGRESS: the student is sitting it and answers can be saved. SUBMITTED: answers are locked (grading is US-49).
+enum MockExamStatus {
+  IN_PROGRESS
+  SUBMITTED
+}
+
+// One mock exam a student generated for one course (US-45). Only its student ever sees it. The settings are kept, so an
+// alternative version (US-46) can be generated with the same settings. Its questions are copied in, so the exam stays the
+// same when the question bank is rebuilt; see lib/mock-exams.ts.
+model MockExam {
+  id          String             @id @default(cuid())
+  userId      String
+  user        User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  courseId    String
+  course      Course             @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  // The topics asked for (keys as in LearningTopic.topicKey, and their display names). Empty means every topic.
+  topicKeys   String[]
+  topics      String[]
+  // The number of questions asked for; the exam has exactly this many.
+  length      Int
+  difficulty  MockExamDifficulty
+  status      MockExamStatus     @default(IN_PROGRESS)
+  submittedAt DateTime?
+  questions   MockExamQuestion[]
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  @@index([userId, courseId, createdAt])
+  @@index([courseId])
+}
+
+// One question of a mock exam, in sitting order (1 is first). The text and the evidence are copies taken when the exam was
+// generated; groupId says which question-bank group it came from and becomes null if a regroup removes that group.
+model MockExamQuestion {
+  id           String         @id @default(cuid())
+  mockExamId   String
+  mockExam     MockExam       @relation(fields: [mockExamId], references: [id], onDelete: Cascade)
+  position     Int
+  groupId      String?
+  group        QuestionGroup? @relation(fields: [groupId], references: [id], onDelete: SetNull)
+  topicKey     String?
+  topic        String?
+  text         String
+  // "Appeared in paperCount of totalPapers papers" when the exam was generated.
+  paperCount   Int
+  totalPapers  Int
+  // Provenance: the papers the question came from, as "Title (year)".
+  sourcePapers String[]
+  // The student's saved answer; null while empty.
+  answer       String?
+  answeredAt   DateTime?
+
+  @@unique([mockExamId, position])
+  @@index([groupId])
+>>>>>>> sprint-4-mock-exams
 }
