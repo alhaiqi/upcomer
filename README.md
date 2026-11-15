@@ -94,6 +94,9 @@ The seed is repeatable and includes one record for a deliberately missing physic
 | `/courses/:courseId/exam` | The Upcomer Exam: every distinct question once, most likely first. Logged-in students can report a question under it, mark questions done and continue where they stopped (US-21), and switch to their personal order (US-28); optional `reported`, `report_error`, `progress_error`, `at`, and `order=personal` query parameters |
 | `/courses/:courseId/confidence` | Rate your confidence in each of the course's topics, 1 to 5 or Skip (US-24); requires a session. Optional `saved` and `error` query parameters |
 | `/courses/:courseId/topics` | Your topics in that course: the topic to study next, with the reason and links to practise (US-30), then your strongest and weakest topics, with what each rests on (US-26), then the course's topics to mark as already covered or undo (US-32); requires a session |
+| `/courses/:courseId/mock-exams` | Mock exams of that course (US-45): choose topics, a length and a difficulty, optionally with your generated practice questions, and see your own exams; generating requires a session |
+| `/courses/:courseId/mock-exams/:mockExamId` | Sit one of your own mock exams: save answers, then submit to lock them; requires a session, and another student's exam is not found |
+| `/courses/:courseId/advice` | Advice from previous students for that course, with search and filters (US-34, US-35, US-37, US-39); publishing requires a session |
 | `/courses/:courseId/questions` | The course's question bank, most frequent first; optional `q`, `year`, `termId`, `examType`, and `professorId` query parameters |
 | `/files/:fileId` | Original bytes for a stored file record |
 | `/admin/uploads` | Admin upload menu |
@@ -400,6 +403,47 @@ After pulling, run `npx prisma generate` and `npx prisma migrate deploy`. One mi
 - **Monitoring:** `topic_covered_saved`, `topic_covered_refused`, `topic_covered_rate_limited` and `topic_covered_save_failed` in the events table. IDs, the new state, reason codes, and error types only; topics are never logged. A failed read of the covered topics is logged by the page's two existing events with `source`/`step` `covered`.
 - **Tests:** `tests/unit/topic-covered.test.ts` (the filter, the all-covered state, the lists unchanged apart from the label, the form), `tests/unit/topic-covered-service.test.ts` (the save, the lock, the limit, the events, the action), `tests/unit/topic-covered-pages.test.tsx`, `tests/integration/topic-covered.test.ts` (marking never changes a profile row or an event, never reaches another course or student, undo restores the recommendation, and a covered save, a rating save and a practice outcome succeed together), and `tests/e2e/topic-covered.spec.ts` (mark, the recommendation moves on, the label, log out and in, undo, all covered, a tampered form). They create their own faculty, courses and students and delete them.
 - **Shared files changed:** `prisma/schema.prisma` (the `CoveredTopic` model, and one relation line each on `User` and `Course`), the new migration, `lib/logger.ts` (four events), `.env.example` (one variable), and `README.md`.
+
+### Configurable mock exams (US-45, built by Ali Shammakh, taken over and fixed by Mustafa Ergaibi, Sprint 4)
+
+After pulling, run `npx prisma generate` and `npx prisma migrate deploy`. Two migrations are new: `20261116000000_mock_exams` (the two tables) and `20261116000001_mock_exam_sources` (three additive columns; it sorts right after the first because it alters its tables).
+
+- **Acceptance test:** "Select topic, length, difficulty; exam follows chosen constraints and has a usable sitting flow."
+- **The form** at `/courses/:courseId/mock-exams` takes topics (none ticked means every topic), a length from 3 to 50, and a difficulty. A visitor sees the page and a link to log in.
+- **The exam follows the settings.** `selectMockQuestions` in `lib/mock-exam-rules.ts` (pure) picks exactly the length asked for, only from the chosen topics. A question's topic is its papers' most common topic (`questionTopic`). If the course cannot give that, nothing is saved and the message says how many questions match.
+- **Difficulty is an estimate**, and the form says so: past papers carry no difficulty rating, so questions are sorted by `complexityOf` (length, plus a fixed amount per extra part). Easier takes the simplest, Harder the most complex, Medium the middle, Mixed a spread over the whole range. When the chosen topics have just enough questions, every difficulty gives the same exam and the exam page says so.
+- **The same settings give the same exam.** The selection has no randomness. US-46 gets a different version through the `exclude` option.
+- **The exam is a copy.** Question text, topic, "appeared in X of Y papers" and the paper titles are copied into `MockExamQuestion`, so a rebuild of the question bank never changes an exam.
+- **Sitting** at `/courses/:courseId/mock-exams/:mockExamId`: one box per question, "Save progress" and "Submit exam". Saved answers are still there after a reload. Submitting saves and locks: claiming the exam and writing the answers are one transaction, so a second tab or a repeated POST gets "already submitted" and changes nothing.
+- **Only the owner.** The pages and actions call `requireUser()` first; every read and write is filtered by the session user's ID, and a user ID in a form is ignored. Another student's exam, and an exam opened under another course, are not found.
+- **Refused with a message, saving nothing:** a length outside 3 to 50, a difficulty not in the list, a topic the course does not have, an answer over 5000 characters (a line break counts once), an answer for another exam's question (ignored).
+- **Rate limit:** `MOCK_EXAM_RATE_LIMIT_PER_HOUR` exams per student per hour (default 20), in memory per server process. Only exams that are made count; a refused attempt does not.
+- **Generated practice questions (US-44).** A checkbox, off by default, so the past-paper flow is unchanged. When ticked, at most half of the exam (`generatedShare`, rounded down) is the student's own generated questions of the chosen topics and difficulty (any difficulty for Mixed), newest first; past papers fill the rest, and the length stays exact. They are read only through `getGeneratedPracticeQuestions` (Ali Slim's contract), never from the table, and nothing is generated on the fly. A generated question is shown as "Generated practice question, based on …" and stored with `paperCount` 0 because it appeared in no paper.
+- **Monitoring:** the `mock_exam_*` events in the events table. IDs, the settings, counts, reason codes and error types only; question text and answers are never logged.
+- **Tests:** `tests/unit/mock-exam-rules.test.ts`, `tests/unit/mock-exams.test.ts`, `tests/unit/mock-exam-generated.test.ts`, `tests/unit/mock-exam-pages.test.tsx`, `tests/integration/mock-exams.test.ts`, and `tests/e2e/mock-exams.spec.ts` (the acceptance test, the sitting flow with a stale second tab, ownership, tampered settings, generated questions, and 375 px in light and dark mode). They create their own courses and students and delete them.
+
+**What was wrong when it was taken over, and fixed:** main had merge-conflict markers in `prisma/schema.prisma`; the nine `mock_exam_*` events were missing from `lib/logger.ts`, so the type-check and the build failed; the save wrote up to 50 answers one by one inside a 5-second transaction; the answer limit counted a browser's line breaks twice, which refused an allowed answer and lost the others typed with it; the forms had no styles; a refused attempt used up the hourly limit; one integration test expected a wrong paper title; there was no e2e test, no page test and no documentation.
+
+**Contracts for the stories that build on it (none of them is built here):**
+- **US-46, alternative version (Lea):** `MockExam` keeps the settings (`topicKeys`, `length`, `difficulty`, `includeGenerated`). Call `selectMockQuestions(pool, config, { generated, exclude })` with the first exam's `groupId`s and `generatedQuestionId`s in `exclude`. A column that links a version to its original is hers to add.
+- **US-47, weighting by weakness and importance (Mustafa):** plugs into `selectMockQuestions`; `SelectOptions.weights` (by topic key) is reserved and not read yet. Every pool question carries `topicKey`, `paperCount` and `totalPapers`. **Generated items are stored with `paperCount` 0**, so a weighting by exam share must handle them explicitly (for example through their source paper's question group), or they would always rank last.
+- **US-48, timer (Mustafa):** needs `startedAt`, a time limit and a `deadlineAt` on `MockExam` (additive, nullable), and the deadline in the claim of `saveMockExam` (`status: IN_PROGRESS` and not past the deadline), which already is the single place that decides whether an exam can still change.
+- **US-49, marking (Mohammed):** the saved answers are `MockExamQuestion.answer`. For learning events, a past-paper item has `questionId`: one source question of its group, chosen by `sourceQuestionOf` (the question in the first of the group's papers in the question bank's order of newest year, then title, then ID; then the lowest number), the same paper order `recordLearningEvents` uses for the topic. Record it with `recordLearningEvents(userId, courseId, [{ source: "MOCK_EXAM", eventId, questionId, correct }])`. A generated item has `generatedQuestionId`; record it with `recordMockOutcomes`. Both IDs become null if their source is deleted, and an event for a source that is no longer published is refused, so marking must cope with an item that records no event. Past papers have no answer keys; what an answer is marked against is US-49's decision.
+
+- **Shared files changed:** `prisma/schema.prisma` (the conflict, three columns, two back-relation lines on `Question` and `GeneratedPracticeQuestion`), the migration `20261116000001_mock_exam_sources`, `lib/logger.ts` (nine events), `.env.example` (one variable), and `README.md`.
+
+### Advice from previous students (US-34, US-35, US-37, US-39): open issues
+
+Built by Ali Shammakh at `/courses/:courseId/advice` (`lib/advice.ts`, `lib/advice-rules.ts`), now owned by Mustafa Ergaibi. A review against the stories found no acceptance failure in the code: scopes are checked against the course, only `https://` links are accepted, an anonymous post never carries its author's name or ID to students, and search and filters stay inside the course. These issues are open and **not fixed yet**:
+
+1. No documentation beyond this list: no events-table rows for the six `advice_*` events, and `ADVICE_RATE_LIMIT_PER_HOUR` (default 20) is not in `.env.example`.
+2. No e2e spec and no page tests; only unit and integration tests of the service.
+3. The publish form does not use the shared form styles, and its messages are not notices; 375 px and dark mode are unverified.
+4. The `advice_*` events sit at the top of `lib/logger.ts`, outside any member's comment.
+5. `advice_published` logs the author's `userId` with the `adviceId` for anonymous posts too. Only admins read logs and US-37 keeps the author for moderation, but it needs a decision.
+6. The exam filter finds advice scoped to that exam only, not advice on one of its questions.
+7. The publish form offers only the 100 most frequent questions of a course.
+8. Nothing removes or edits advice yet (the `REMOVED` status has no caller); that belongs to other stories.
 
 ### Known limitations
 
@@ -710,6 +754,12 @@ The levels live in one table, `EVENT_LEVELS` in `lib/logger.ts`, and TypeScript 
 | Mustafa Ergaibi (Sprint 4) | `topic_covered_saved` | info | `userId`, `courseId`, `covered` (`true`, `false`), `changed` (`false` when the topic already was as asked); never a topic |
 | Mustafa Ergaibi (Sprint 4) | `topic_covered_refused`, `topic_covered_rate_limited` | warn | `userId`, `courseId`, `reason` (`unknown_topic`, `invalid_value`), `retryAfterSeconds`; never a topic or the submitted value |
 | Mustafa Ergaibi (Sprint 4) | `topic_covered_save_failed` | error | `userId`, `courseId`, `errorType` |
+| Sprint 4, mock exams (US-45) | `mock_exam_created` | info | `userId`, `courseId`, `mockExamId`, `difficulty`, `length`, `topicCount`, `generatedCount` (never a topic, a question or an answer) |
+| Sprint 4, mock exams (US-45) | `mock_exam_refused`, `mock_exam_rate_limited` | warn | `userId`, `courseId`, `reason` (`course_not_found`, `no_questions`, `topic_invalid`, `length_invalid`, `difficulty_invalid`, `not_enough_questions`), `retryAfterSeconds` |
+| Sprint 4, mock exams (US-45) | `mock_exam_failed`, `mock_exam_retrieval_failed` | error | `userId`, `courseId`, `mockExamId`, `entity` (`options`, `list`), `errorType`, `errorCode` |
+| Sprint 4, mock exams (US-45) | `mock_exam_saved`, `mock_exam_submitted` | info | `userId`, `mockExamId`, `submit` (never an answer) |
+| Sprint 4, mock exams (US-45) | `mock_exam_save_refused` | warn | `userId`, `mockExamId`, `submit`, `reason` (`not_found`, `already_submitted`, `answer_too_long`) |
+| Sprint 4, mock exams (US-45) | `mock_exam_save_failed` | error | `userId`, `mockExamId`, `submit`, `errorType`, `errorCode` |
 
 ### What is never logged
 
