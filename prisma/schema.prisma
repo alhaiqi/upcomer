@@ -61,6 +61,7 @@ model User {
   questionReports     QuestionReport[]     @relation("ReportedQuestions")
   closedReports       QuestionReport[]     @relation("ClosedQuestionReports")
   learningTopics      LearningTopic[]
+  coveredTopics       CoveredTopic[]
   questionProgress    QuestionProgress[]
   learningEvents      LearningEvent[]
   generatedQuestions  GeneratedPracticeQuestion[]
@@ -127,6 +128,7 @@ model Course {
   corrections      QuestionCorrection[]
   questionReports  QuestionReport[]
   learningTopics   LearningTopic[]
+  coveredTopics    CoveredTopic[]
   questionProgress QuestionProgress[]
   learningEvents   LearningEvent[]
   generatedQuestions GeneratedPracticeQuestion[]
@@ -402,6 +404,22 @@ model LearningTopic {
   incorrectCount Int @default(0)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@id([userId, courseId, topicKey])
+  @@index([courseId])
+}
+
+// A topic a student marked as already covered in one course (US-32). A row means covered; undoing deletes it. It only
+// leaves the topic out of the "Study next" recommendation. It is not evidence, so it is kept apart from LearningTopic:
+// marking a topic never creates or changes a profile row.
+model CoveredTopic {
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  courseId  String
+  course    Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  // The same key as LearningTopic.topicKey.
+  topicKey  String
+  createdAt DateTime @default(now())
 
   @@id([userId, courseId, topicKey])
   @@index([courseId])
