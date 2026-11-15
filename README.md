@@ -93,6 +93,7 @@ The seed is repeatable and includes one record for a deliberately missing physic
 | `/courses/:courseId/materials` | Materials for that course |
 | `/courses/:courseId/exam` | The Upcomer Exam: every distinct question once, most likely first. Logged-in students can report a question under it, mark questions done and continue where they stopped (US-21), and switch to their personal order (US-28); optional `reported`, `report_error`, `progress_error`, `at`, and `order=personal` query parameters |
 | `/courses/:courseId/confidence` | Rate your confidence in each of the course's topics, 1 to 5 or Skip (US-24); requires a session. Optional `saved` and `error` query parameters |
+| `/courses/:courseId/topics` | Your topics in that course: your strongest and weakest topics, with what each rests on (US-26); requires a session |
 | `/courses/:courseId/questions` | The course's question bank, most frequent first; optional `q`, `year`, `termId`, `examType`, and `professorId` query parameters |
 | `/files/:fileId` | Original bytes for a stored file record |
 | `/admin/uploads` | Admin upload menu |
@@ -354,6 +355,19 @@ After pulling, run `npx prisma generate` and `npm run db:migrate`. Two migration
 
 - **`personalPriority(paperCount, totalPapers, weakness)`** in `lib/personal-order.ts`: `share of papers × (1 + WEAKNESS_WEIGHT × weakness)`, with `WEAKNESS_WEIGHT = 2`. A student's strongest topic still counts at its full exam share, and the weakest counts at most 3 times as much. Equally weak questions rank by frequency, and equally frequent ones by weakness. The function is pure, so the same inputs always give the same priority.
 - **Invalid inputs** (NaN, Infinity, negative counts, more papers than the course has, weakness outside 0–1) never throw. `checkedPriority` clamps each one to a safe value and returns the reason codes. `personalizeQuestions` logs at most one `priority_calculation_failed` line per ranking, so a bad course can't flood the error alert.
+
+### Strongest and weakest topics (US-26, Mustafa Ergaibi, Sprint 4)
+
+- **`/courses/:courseId/topics`** ("Your topics"; logged-in students, a visitor is sent to log in and comes back; an unknown course is not found) shows the student's strongest and weakest topics in that course. The confidence page and, for logged-in students, the Upcomer Exam link to it. US-30 and US-32 can add their own sections to the page, built on the `ranked` list that `getTopicStrengths` already returns.
+- **One course only.** `getTopicStrengths(userId, courseId)` in `lib/topic-strengths.ts` reads the stored `weakness` through `getLearningProfile` (never recomputed) and the course's published exam-paper topics. Another course's or another student's profile is never read.
+- **Evidence rule.** A topic counts only with a saved confidence rating or at least one recorded practice outcome (`correctCount + incorrectCount > 0`). A skipped, never-practised topic is never a strength or a weakness. A profile topic that is no longer on a published exam paper of the course is left out, and so is a row whose stored weakness is not between 0 and 1 (counted in `topic_strengths_invalid_data`).
+- **Order** (`lib/topic-strengths-rules.ts`, pure): weakness descending, then exam frequency (published papers with the topic) descending, then topic name. Weaknesses within `1e-9` are a tie.
+- **Lists.** With `N` topics that have evidence, each list has `k = min(3, floor(N / 2))` topics: "Weakest so far" is the first `k`, "Strongest so far" the last `k`, strongest first. A tie is never split between the two lists: if the lists would meet at tied topics, every topic with that weakness is dropped from both (0.8, 0.5, 0.5, 0.2 gives one weakest and one strongest). A side left empty says no topic stands out.
+- **Each topic shows what it rests on**, for example "Rated 2 of 5, 3 correct and 1 incorrect" or "Rated 4 of 5, no practice recorded". No score or percentage is shown, and the page says it is a guide, not a measure of mastery.
+- **Not enough data** gives a message and a "Rate your topics" link instead of a list: no topics in the course (no link, nothing to rate), no learning profile, every topic skipped with no practice, only one topic with evidence, or all topics level (they are listed once, with no strongest or weakest).
+- **Monitoring:** `topic_strengths_retrieval_failed` and `topic_strengths_invalid_data` in the events table. IDs, the failed read, a count, and error types only; topics are never logged. A failed read is logged once and the page shows the generic error page.
+- **Tests:** `tests/unit/topic-strengths.test.ts`, `tests/unit/topic-strengths-pages.test.tsx`, `tests/integration/topic-strengths.test.ts` (isolation between courses and students; outcomes through `recordLearningEvents` move a topic between strongest and weakest), and `tests/e2e/topic-strengths.spec.ts`. They create their own faculty, courses and students and delete them.
+- **Shared files changed:** `lib/logger.ts` (two events), `app/courses/[courseId]/confidence/page.tsx` (two links), `app/courses/[courseId]/exam/page.tsx` (one link for logged-in students), and `README.md`.
 
 ### Known limitations
 
@@ -657,6 +671,8 @@ The levels live in one table, `EVENT_LEVELS` in `lib/logger.ts`, and TypeScript 
 | Mustafa Ergaibi (Sprint 3) | `topic_confidence_saved` | info | `userId`, `courseId`, `ratedTopics`, `skippedTopics`, `unchangedTopics` (never a topic) |
 | Mustafa Ergaibi (Sprint 3) | `topic_confidence_refused`, `topic_confidence_rate_limited` | warn | `userId`, `courseId`, `reason` (`unknown_topic`, `invalid_rating`, `no_ratings`), `retryAfterSeconds` |
 | Mustafa Ergaibi (Sprint 3) | `topic_confidence_save_failed` | error | `userId`, `courseId`, `errorType` |
+| Mustafa Ergaibi (Sprint 4) | `topic_strengths_retrieval_failed` | error | `userId`, `courseId`, `source` (`profile`, `course_topics`, `selection`), `errorType` (never a topic); one line per failed page load |
+| Mustafa Ergaibi (Sprint 4) | `topic_strengths_invalid_data` | warn | `userId`, `courseId`, `invalidTopics` (a count, never a topic); at most one line per page load |
 
 ### What is never logged
 
