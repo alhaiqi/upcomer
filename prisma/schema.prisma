@@ -274,6 +274,8 @@ model Question {
   corrections        QuestionCorrection[]
   learningEvents     LearningEvent[]
   generatedQuestions GeneratedPracticeQuestion[]
+  // Added for US-45: mock exam questions that record this source question (for US-49's learning events).
+  mockExamQuestions  MockExamQuestion[]
   createdAt          DateTime             @default(now())
   updatedAt          DateTime             @updatedAt
 
@@ -574,6 +576,8 @@ model GeneratedPracticeQuestion {
   // Source exams have no answer keys: do not invent a rubric or an assessed result.
   rubric Json?
   learningEvents LearningEvent[]
+  // Added for US-45: mock exam questions copied from this item.
+  mockExamQuestions MockExamQuestion[]
   createdAt DateTime @default(now())
 
   @@unique([userId, courseId, contentHash])
@@ -615,6 +619,8 @@ model MockExam {
   // The number of questions asked for; the exam has exactly this many.
   length      Int
   difficulty  MockExamDifficulty
+  // The student asked for their generated practice questions (US-44) to be mixed in. Kept with the other settings (US-46).
+  includeGenerated Boolean       @default(false)
   status      MockExamStatus     @default(IN_PROGRESS)
   submittedAt DateTime?
   questions   MockExamQuestion[]
@@ -634,10 +640,19 @@ model MockExamQuestion {
   position     Int
   groupId      String?
   group        QuestionGroup? @relation(fields: [groupId], references: [id], onDelete: SetNull)
+  // A past-paper question: the group's source question when the exam was generated, chosen by sourceQuestionOf in
+  // lib/mock-exam-rules.ts. US-49 records a MOCK_EXAM learning event with it. Null for a generated question, and if the
+  // source question is deleted.
+  questionId   String?
+  question     Question?      @relation(fields: [questionId], references: [id], onDelete: SetNull)
+  // A generated practice question (US-44): the item it was copied from. Null for a past-paper question, and if the item
+  // is deleted (its source was replaced or removed).
+  generatedQuestionId String?
+  generatedQuestion   GeneratedPracticeQuestion? @relation(fields: [generatedQuestionId], references: [id], onDelete: SetNull)
   topicKey     String?
   topic        String?
   text         String
-  // "Appeared in paperCount of totalPapers papers" when the exam was generated.
+  // "Appeared in paperCount of totalPapers papers" when the exam was generated. A generated question has paperCount 0.
   paperCount   Int
   totalPapers  Int
   // Provenance: the papers the question came from, as "Title (year)".
@@ -648,4 +663,6 @@ model MockExamQuestion {
 
   @@unique([mockExamId, position])
   @@index([groupId])
+  @@index([questionId])
+  @@index([generatedQuestionId])
 }
