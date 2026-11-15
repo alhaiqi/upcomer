@@ -2,8 +2,10 @@ import { randomUUID } from "node:crypto";
 import { FileCategory } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { db } from "@/lib/db";
+import { recordLearningEvents, recordMockOutcomes } from "@/lib/learning-evidence";
 import { complexityOf } from "@/lib/mock-exam-rules";
 import { createMockExam, getMockExam, getMockExamOptions, listMyMockExams, saveMockExam } from "@/lib/mock-exams";
+import { generatePracticeQuestions, getGeneratedPracticeQuestions } from "@/lib/practice-generation";
 import { rebuildQuestionBank } from "@/lib/question-bank";
 
 // Mock exams (US-45) against a real, migrated database, built on the real question bank: papers with topics and questions
@@ -29,7 +31,7 @@ const DATABASES = [
   `Normalise a relation to third normal form.\na) List the functional dependencies.\nb) Show each decomposition step.\nc) Prove the result is lossless.`,
 ];
 
-const generate = async (over: Partial<{ courseId: string; length: string; difficulty: string; topics: string[] }> = {}) =>
+const generate = async (over: Partial<{ courseId: string; length: string; difficulty: string; topics: string[]; includeGenerated: boolean }> = {}) =>
   createMockExam(ids.student, { courseId: ids.course, length: "3", difficulty: "MIXED", topics: [], ...over });
 const mustGenerate = async (over: Parameters<typeof generate>[0] = {}) => {
   const result = await generate(over);
@@ -107,7 +109,7 @@ describe("US-45: the exam follows the chosen constraints", () => {
     const exam = await examOf(await mustGenerate({ topics: ["databases"] }));
     for (const question of exam.questions) {
       expect(question).toMatchObject({ paperCount: 1, totalPapers: 2 });
-      expect(question.sourcePapers).toEqual([`Databases final ${run} (2025)`]);
+      expect(question.sourcePapers).toEqual(["Databases final (2025)"]);
     }
   });
 
@@ -161,6 +163,31 @@ describe("US-45: the sitting flow", () => {
     expect(await saveMockExam(ids.student, id, { [question.id]: "x".repeat(5001) }, false)).toEqual({ ok: false, error: "answer_too_long" });
   });
 
+  it("counts a line break once, so an answer the browser allowed is saved", async () => {
+    const id = await mustGenerate();
+    const [question] = (await examOf(id)).questions;
+    // 4999 characters as typed; a browser posts each line break as two.
+    const posted = Array.from({ length: 2500 }, () => "x").join("\r\n");
+    expect(await saveMockExam(ids.student, id, { [question.id]: posted }, false)).toEqual({ ok: true, submitted: false });
+    expect((await examOf(id)).questions[0].answer).toHaveLength(4999);
+  });
+
+  it("saves every answer of an exam in one go, and leaves unchanged answers alone", async () => {
+    const id = await mustGenerate({ length: "8" });
+    const exam = await examOf(id);
+    const answers = Object.fromEntries(exam.questions.map(question => [question.id, `answer ${question.position}`]));
+    expect(await saveMockExam(ids.student, id, answers, false)).toEqual({ ok: true, submitted: false });
+    const first = await db.mockExamQuestion.findMany({ where: { mockExamId: id }, orderBy: { position: "asc" }, select: { id: true, answer: true, answeredAt: true } });
+    expect(first.map(question => question.answer)).toEqual(exam.questions.map(question => `answer ${question.position}`));
+    // Saving again with one answer changed moves only that answer's time.
+    await new Promise(resolve => setTimeout(resolve, 20));
+    expect(await saveMockExam(ids.student, id, { ...answers, [first[0].id]: "changed" }, false)).toEqual({ ok: true, submitted: false });
+    const second = await db.mockExamQuestion.findMany({ where: { mockExamId: id }, orderBy: { position: "asc" }, select: { answer: true, answeredAt: true } });
+    expect(second[0].answer).toBe("changed");
+    expect(second[0].answeredAt!.getTime()).toBeGreaterThan(first[0].answeredAt!.getTime());
+    expect(second.slice(1)).toEqual(first.slice(1).map(({ answer, answeredAt }) => ({ answer, answeredAt })));
+  });
+
   it("lets only the student see or change their exam", async () => {
     const id = await mustGenerate();
     const [question] = (await examOf(id)).questions;
@@ -176,6 +203,100 @@ describe("US-45: the sitting flow", () => {
     const results = await Promise.all([saveMockExam(ids.student, id, {}, true), saveMockExam(ids.student, id, {}, true)]);
     expect(results.filter(result => result.ok)).toHaveLength(1);
     expect(results.filter(result => !result.ok)).toEqual([{ ok: false, error: "already_submitted" }]);
+  });
+});
+
+describe("US-45 with US-44: generated practice questions in a mock exam", () => {
+  const rowsOf = (id: string) => db.mockExamQuestion.findMany({ where: { mockExamId: id }, orderBy: { position: "asc" } });
+
+  it("records one published source question of its group for every past-paper question", async () => {
+    const first = await rowsOf(await mustGenerate({ length: "4" }));
+    for (const row of first) {
+      expect(row.generatedQuestionId).toBeNull();
+      const source = await db.question.findUniqueOrThrow({ where: { id: row.questionId! }, select: { groupId: true, file: { select: { courseId: true, status: true } } } });
+      expect(source).toEqual({ groupId: row.groupId, file: { courseId: ids.course, status: "PUBLISHED" } });
+    }
+    // The same settings record the same source questions.
+    const second = await rowsOf(await mustGenerate({ length: "4" }));
+    expect(second.map(row => row.questionId)).toEqual(first.map(row => row.questionId));
+  });
+
+  it("is past papers only until the student asks, and the form knows how many generated questions they have", async () => {
+    expect((await getMockExamOptions(ids.course, ids.student)).generated).toBe(0);
+    expect(await generatePracticeQuestions(ids.student, ids.course, { count: 3, difficulty: "EASY", topicKey: "databases" })).toMatchObject({ ok: true });
+    expect(await generatePracticeQuestions(ids.other, ids.course, { count: 2, difficulty: "EASY", topicKey: "databases" })).toMatchObject({ ok: true });
+    expect((await getMockExamOptions(ids.course, ids.student)).generated).toBe(3);
+    expect((await getMockExamOptions(ids.course)).generated).toBe(0);
+
+    const plain = await rowsOf(await mustGenerate({ topics: ["databases"], length: "4", difficulty: "EASY" }));
+    expect(plain.every(row => row.generatedQuestionId === null && row.paperCount === 1)).toBe(true);
+  });
+
+  it("mixes in up to half of the exam from the student's own generated questions of the chosen topic and difficulty", async () => {
+    const mine = await getGeneratedPracticeQuestions(ids.student, ids.course);
+    const id = await mustGenerate({ topics: ["databases"], length: "4", difficulty: "EASY", includeGenerated: true });
+    const rows = await rowsOf(id);
+    expect(rows).toHaveLength(4);
+    expect(rows.map(row => row.position)).toEqual([1, 2, 3, 4]);
+    const [past, generated] = [rows.filter(row => row.generatedQuestionId === null), rows.filter(row => row.generatedQuestionId !== null)];
+    expect(past).toHaveLength(2);
+    expect(past.every(row => row.groupId !== null && row.questionId !== null && row.paperCount === 1)).toBe(true);
+    // Generated questions come last, are the student's own, and keep their task and their source paper.
+    expect(generated.map(row => row.position)).toEqual([3, 4]);
+    for (const row of generated) {
+      const item = mine.find(candidate => candidate.id === row.generatedQuestionId)!;
+      expect(item).toBeDefined();
+      expect(row).toMatchObject({ groupId: null, questionId: null, text: item.prompt, topicKey: "databases", paperCount: 0, totalPapers: 2, sourcePapers: ["Databases final"] });
+    }
+    expect((await db.mockExam.findUniqueOrThrow({ where: { id } })).includeGenerated).toBe(true);
+    expect((await examOf(id)).includeGenerated).toBe(true);
+
+    // No generated question matches Networking or HARD, so those exams are past papers only and still exact.
+    const hard = await rowsOf(await mustGenerate({ topics: ["databases"], length: "4", difficulty: "HARD", includeGenerated: true }));
+    expect(hard).toHaveLength(4);
+    expect(hard.every(row => row.generatedQuestionId === null)).toBe(true);
+    const networking = await rowsOf(await mustGenerate({ topics: ["networking basics"], length: "3", difficulty: "EASY", includeGenerated: true }));
+    expect(networking.every(row => row.generatedQuestionId === null)).toBe(true);
+  });
+
+  it("makes an exam longer than the topic's past-paper questions, and never uses another student's generated questions", async () => {
+    // Databases has four past-paper questions; the student has three generated EASY ones.
+    expect(await generate({ topics: ["databases"], length: "6", difficulty: "EASY" })).toMatchObject({ ok: false, error: "not_enough_questions", available: 4 });
+    // Half of six is three: all three generated questions, and the three simplest past-paper ones.
+    const rows = await rowsOf(await mustGenerate({ topics: ["databases"], length: "6", difficulty: "EASY", includeGenerated: true }));
+    expect(rows.filter(row => row.generatedQuestionId === null)).toHaveLength(3);
+    const used = rows.flatMap(row => (row.generatedQuestionId ? [row.generatedQuestionId] : []));
+    expect(used).toHaveLength(3);
+    expect(await db.generatedPracticeQuestion.count({ where: { id: { in: used }, userId: ids.student } })).toBe(3);
+    // Seven is the longest: all four past-paper questions and the three generated ones.
+    expect(await rowsOf(await mustGenerate({ topics: ["databases"], length: "7", difficulty: "EASY", includeGenerated: true }))).toHaveLength(7);
+    expect(await generate({ topics: ["databases"], length: "8", difficulty: "EASY", includeGenerated: true })).toMatchObject({ ok: false, error: "not_enough_questions", available: 7 });
+  });
+
+  it("gives US-49 what a MOCK_EXAM learning event needs for both kinds of question", async () => {
+    const id = await mustGenerate({ topics: ["databases"], length: "4", difficulty: "EASY", includeGenerated: true });
+    const rows = await rowsOf(id);
+    const past = rows.find(row => row.questionId !== null)!;
+    const generated = rows.find(row => row.generatedQuestionId !== null)!;
+    // A past-paper item goes through recordLearningEvents with its source question; a generated item through recordMockOutcomes.
+    expect(await recordLearningEvents(ids.student, ids.course, [{ source: "MOCK_EXAM", eventId: `${id}:${past.id}`, questionId: past.questionId!, correct: false }]))
+      .toEqual({ ok: true, recorded: 1, duplicates: 0 });
+    expect(await recordMockOutcomes(ids.student, ids.course, id, [{ itemId: generated.id, generatedQuestionId: generated.generatedQuestionId!, correct: true }]))
+      .toEqual({ ok: true, recorded: 1, duplicates: 0 });
+    const events = await db.learningEvent.findMany({ where: { userId: ids.student, source: "MOCK_EXAM" }, select: { topicKey: true, correct: true }, orderBy: { correct: "asc" } });
+    expect(events).toEqual([{ topicKey: "databases", correct: false }, { topicKey: "databases", correct: true }]);
+    // Another student cannot record against this student's generated item.
+    expect(await recordMockOutcomes(ids.other, ids.course, id, [{ itemId: generated.id, generatedQuestionId: generated.generatedQuestionId!, correct: true }]))
+      .toMatchObject({ ok: false, error: "not_found" });
+  });
+
+  it("keeps a generated question's copy when the generated item is deleted", async () => {
+    const id = await mustGenerate({ topics: ["databases"], length: "4", difficulty: "EASY", includeGenerated: true });
+    const before = (await rowsOf(id)).filter(row => row.generatedQuestionId !== null);
+    await db.generatedPracticeQuestion.deleteMany({ where: { id: { in: before.map(row => row.generatedQuestionId!) } } });
+    const after = (await rowsOf(id)).filter(row => row.paperCount === 0);
+    expect(after.map(row => row.text)).toEqual(before.map(row => row.text));
+    expect(after.every(row => row.generatedQuestionId === null)).toBe(true);
   });
 });
 

@@ -52,6 +52,7 @@ export default async function ConsolidatedExamPage({ params, searchParams }: {
           {done && <OrderSwitch route={route} personal={personal} />}
           {done && <p><Link href={`/courses/${courseId}/practice`}>Practice questions and update your profile</Link></p>}
           {done && !noProfile && <p className="muted">{rateTopics} to change your personal order.</p>}
+          {done && <p className="muted"><Link href={`/courses/${courseId}/topics`}>See your strongest and weakest topics</Link></p>}
           {noProfile && <p className="muted" role="note">You have no learning profile for this course yet, so this is the frequency order. {rateTopics} to get a personal order.</p>}
           {exam.lowConfidence && <p className="notice" role="note">Low confidence: these tiers are based on only {papers}. They become more reliable from {MIN_CONFIDENT_PAPERS} papers.</p>}
           {done && <ProgressSummary positions={shown} done={done} at={Number(at) || undefined} />}

@@ -1,0 +1,6 @@
+.section { margin-top: 1.75rem; }
+.section > h2 { margin-bottom: .35rem; }
+.topic { display: grid; gap: .6rem; margin-top: 1rem; overflow-wrap: anywhere; }
+.topic h3, .topic p { margin: 0; }
+.topic summary { cursor: pointer; font-weight: 600; }
+.topic details p { margin-top: .4rem; }

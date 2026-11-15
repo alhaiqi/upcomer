@@ -23,9 +23,9 @@ export default async function TopicConfidencePage({ params, searchParams }: {
   const [topics, ratings] = await Promise.all([getCourseTopics(courseId), getTopicConfidence(user.id, courseId)]);
   const exam = `/courses/${courseId}/exam`;
   return <><Link className="back" href={`/courses/${courseId}`}>← Back to {course.code}</Link><span className="eyebrow">{course.code}</span><h1>Rate your topics</h1>
-    <p className="muted">How confident are you in each topic of {course.code}? Your ratings set your personal order of the <Link href={exam}>Upcomer Exam</Link>: questions on topics you are less confident in come first. Skip a topic you don&apos;t want to rate.</p>
+    <p className="muted">How confident are you in each topic of {course.code}? Your ratings set your personal order of the <Link href={exam}>Upcomer Exam</Link>: questions on topics you are less confident in come first. Skip a topic you don&apos;t want to rate. <Link href={`/courses/${courseId}/topics`}>See your strongest and weakest topics</Link></p>
     {error && <p className="notice error" role="alert">{confidenceMessage(error)}</p>}
-    {saved && !error && <p className="notice" role="status">Your ratings were saved. <Link href={`${exam}?order=personal`}>See your personal order</Link></p>}
+    {saved && !error && <p className="notice" role="status">Your ratings were saved. <Link href={`${exam}?order=personal`}>See your personal order</Link> or <Link href={`/courses/${courseId}/topics`}>your strongest and weakest topics</Link>.</p>}
     {!topics.length
       ? <p className="card muted">This course&apos;s exam papers have no topics yet, so there is nothing to rate.</p>
       : <form className={`form ${styles.form}`} action={saveTopicConfidenceAction}>

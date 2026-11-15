@@ -1,0 +1,7 @@
+.question { display: grid; gap: .6rem; overflow-wrap: anywhere; }
+.question p { margin: 0; }
+.text { white-space: pre-wrap; }
+.question textarea { resize: vertical; }
+.actions { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem; margin-top: 1.25rem; }
+.actions button { margin-top: 0; }
+.actions p { flex: 1 1 100%; margin: 0; }

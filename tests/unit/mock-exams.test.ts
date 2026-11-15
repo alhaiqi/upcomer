@@ -3,19 +3,22 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const db = vi.hoisted(() => {
   const tx = {
     mockExam: { updateMany: vi.fn(), findFirst: vi.fn() },
-    mockExamQuestion: { findMany: vi.fn(), update: vi.fn() },
+    $executeRaw: vi.fn(),
   };
   return {
     tx,
     course: { findUnique: vi.fn() },
     courseFile: { findMany: vi.fn() },
+    question: { findMany: vi.fn() },
     mockExam: { create: vi.fn(), findFirst: vi.fn(), findMany: vi.fn() },
-    $transaction: vi.fn(async (callback: (client: typeof tx) => Promise<unknown>) => callback(tx)),
+    $transaction: vi.fn(async (callback: (client: typeof tx) => Promise<unknown>, options?: unknown) => { void options; return callback(tx); }),
   };
 });
 const consolidated = vi.hoisted(() => ({ getConsolidatedExam: vi.fn() }));
 vi.mock("@/lib/db", () => ({ db }));
 vi.mock("@/lib/consolidated-exam", () => consolidated);
+// Generated practice questions (US-44) are covered in mock-exam-generated.test.ts; here the student has none.
+vi.mock("@/lib/practice-generation", () => ({ getGeneratedPracticeQuestions: vi.fn(async () => []) }));
 vi.mock("@/lib/logger", () => ({ logError: vi.fn(), errorCode: (error: unknown) => (error as { code?: string } | null)?.code }));
 vi.mock("@/lib/rate-limit", () => ({ checkRateLimit: vi.fn(() => ({ ok: true })), limitFromEnv: (_name: string, fallback: number) => fallback }));
 
@@ -34,11 +37,12 @@ beforeEach(() => {
   db.courseFile.findMany.mockResolvedValue([{ id: "p1", topic: "Networking Basics" }, { id: "p2", topic: " databases " }]);
   consolidated.getConsolidatedExam.mockResolvedValue({ totalPapers: 2, questions: [1, 2, 3, 4].map(index => examQuestion(index, "p1")).concat([5, 6, 7, 8].map(index => examQuestion(index, "p2"))) });
   db.mockExam.create.mockResolvedValue({ id: "mock-1" });
+  db.question.findMany.mockResolvedValue([]);
 });
 
 describe("createMockExam (US-45)", () => {
   it("stores the settings and a copy of exactly the questions asked for", async () => {
-    expect(await createMockExam("user-1", input({ topics: ["Databases"], difficulty: "HARD" }))).toEqual({ ok: true, id: "mock-1" });
+    expect(await createMockExam("user-1", input({ topics: ["Databases"], difficulty: "HARD" }))).toEqual({ ok: true, id: "mock-1", difficultyApplied: true });
     const data = db.mockExam.create.mock.calls[0][0].data;
     expect(data).toMatchObject({ userId: "user-1", courseId: "course-1", length: 3, difficulty: "HARD", topicKeys: ["databases"], topics: ["databases"] });
     expect(data.questions.create).toHaveLength(3);
@@ -79,6 +83,22 @@ describe("createMockExam (US-45)", () => {
     expect(db.courseFile.findMany.mock.calls[0][0].where).toMatchObject({ courseId: "course-1" });
   });
 
+  it("does not count a refused attempt towards the hourly limit", async () => {
+    expect(await createMockExam("user-1", input({ topics: ["databases"], length: "5" }))).toMatchObject({ ok: false, error: "not_enough_questions" });
+    expect(await createMockExam("user-1", input({ topics: ["quantum"] }))).toMatchObject({ ok: false, error: "topic_invalid" });
+    expect(checkRateLimit).not.toHaveBeenCalled();
+    expect(await createMockExam("user-1", input())).toMatchObject({ ok: true });
+    expect(checkRateLimit).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(checkRateLimit).mock.calls[0][0]).toBe("mock-exam:user-1");
+  });
+
+  it("says when the difficulty could not choose between the questions", async () => {
+    // Databases has four questions: an exam of four needs them all, whatever the difficulty.
+    expect(await createMockExam("user-1", input({ topics: ["databases"], length: "4", difficulty: "EASY" }))).toMatchObject({ ok: true, difficultyApplied: false });
+    expect(await createMockExam("user-1", input({ topics: ["databases"], length: "4", difficulty: "MIXED" }))).toMatchObject({ ok: true, difficultyApplied: true });
+    expect(await createMockExam("user-1", input({ topics: ["databases"], length: "3", difficulty: "EASY" }))).toMatchObject({ ok: true, difficultyApplied: true });
+  });
+
   it("stops a student who generates too much", async () => {
     vi.mocked(checkRateLimit).mockReturnValueOnce({ ok: false, retryAfterSeconds: 30 } as ReturnType<typeof checkRateLimit>);
     expect(await createMockExam("user-1", input())).toEqual({ ok: false, error: "rate_limited" });
@@ -94,7 +114,7 @@ describe("createMockExam (US-45)", () => {
 describe("getMockExamOptions", () => {
   it("counts the questions of each topic", async () => {
     expect(await getMockExamOptions("course-1")).toEqual({
-      total: 8, topics: [{ key: "databases", label: "databases", count: 4 }, { key: "networking basics", label: "Networking Basics", count: 4 }],
+      total: 8, topics: [{ key: "databases", label: "databases", count: 4 }, { key: "networking basics", label: "Networking Basics", count: 4 }], generated: 0,
     });
   });
 });
@@ -107,29 +127,59 @@ describe("getMockExam", () => {
   });
 });
 
+// The one statement that writes the answers: its SQL text, and its values in order (now, IDs, answers, exam ID).
+const written = () => {
+  const [strings, ...values] = db.tx.$executeRaw.mock.calls[0] as [string[], ...unknown[]];
+  return { sql: strings.join("?"), values };
+};
+
 describe("saveMockExam (the sitting flow)", () => {
-  it("saves answers of the exam's own questions and trims them", async () => {
+  it("writes every answer in one statement, tidied, for this exam's questions only", async () => {
     db.tx.mockExam.updateMany.mockResolvedValue({ count: 1 });
-    db.tx.mockExamQuestion.findMany.mockResolvedValue([{ id: "q1" }, { id: "q2" }]);
     expect(await saveMockExam("user-1", "mock-1", { q1: "  my answer \r\n", q2: "   ", other: "not mine" }, false)).toEqual({ ok: true, submitted: false });
     expect(db.tx.mockExam.updateMany.mock.calls[0][0].where).toMatchObject({ id: "mock-1", userId: "user-1", status: "IN_PROGRESS" });
-    expect(db.tx.mockExamQuestion.update).toHaveBeenCalledTimes(2);
-    expect(db.tx.mockExamQuestion.update.mock.calls[0][0]).toMatchObject({ where: { id: "q1" }, data: { answer: "my answer" } });
-    expect(db.tx.mockExamQuestion.update.mock.calls[1][0]).toMatchObject({ where: { id: "q2" }, data: { answer: null, answeredAt: null } });
+    expect(db.tx.$executeRaw).toHaveBeenCalledTimes(1);
+    const { sql, values } = written();
+    expect(values).toEqual([expect.any(Date), ["q1", "q2", "other"], ["my answer", "", "not mine"], "mock-1"]);
+    // An ID of another exam's question matches no row, an empty answer is stored as NULL, and an unchanged one is not rewritten.
+    expect(sql).toContain('question."mockExamId" = ?');
+    expect(sql).toContain("NULLIF(sent.answer, '')");
+    expect(sql).toContain("IS DISTINCT FROM");
+  });
+
+  it("gives the transaction time on a remote database", async () => {
+    db.tx.mockExam.updateMany.mockResolvedValue({ count: 1 });
+    await saveMockExam("user-1", "mock-1", { q1: "a" }, false);
+    expect(db.$transaction.mock.calls[0][1]).toEqual({ maxWait: 10_000, timeout: 20_000 });
+  });
+
+  it("counts a line break once, as the browser's limit does", async () => {
+    db.tx.mockExam.updateMany.mockResolvedValue({ count: 1 });
+    // 2500 lines of one character: 4999 characters as typed, 7498 as a browser posts them.
+    const posted = Array.from({ length: 2500 }, () => "x").join("\r\n");
+    expect(posted.length).toBeGreaterThan(5000);
+    expect(await saveMockExam("user-1", "mock-1", { q1: posted }, false)).toEqual({ ok: true, submitted: false });
+    expect((written().values[2] as string[])[0]).toHaveLength(4999);
   });
 
   it("submits by moving the exam to SUBMITTED in the same transaction", async () => {
     db.tx.mockExam.updateMany.mockResolvedValue({ count: 1 });
-    db.tx.mockExamQuestion.findMany.mockResolvedValue([{ id: "q1" }]);
     expect(await saveMockExam("user-1", "mock-1", { q1: "final" }, true)).toEqual({ ok: true, submitted: true });
     expect(db.tx.mockExam.updateMany.mock.calls[0][0].data).toMatchObject({ status: "SUBMITTED" });
+    expect(db.tx.$executeRaw).toHaveBeenCalledTimes(1);
+  });
+
+  it("submits without answers without writing any", async () => {
+    db.tx.mockExam.updateMany.mockResolvedValue({ count: 1 });
+    expect(await saveMockExam("user-1", "mock-1", {}, true)).toEqual({ ok: true, submitted: true });
+    expect(db.tx.$executeRaw).not.toHaveBeenCalled();
   });
 
   it("refuses to change an exam that was already submitted", async () => {
     db.tx.mockExam.updateMany.mockResolvedValue({ count: 0 });
     db.tx.mockExam.findFirst.mockResolvedValue({ id: "mock-1" });
     expect(await saveMockExam("user-1", "mock-1", { q1: "late" }, false)).toEqual({ ok: false, error: "already_submitted" });
-    expect(db.tx.mockExamQuestion.update).not.toHaveBeenCalled();
+    expect(db.tx.$executeRaw).not.toHaveBeenCalled();
   });
 
   it("says not found for an exam that is not the student's", async () => {

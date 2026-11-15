@@ -32,7 +32,7 @@ export default async function PracticePage({ params, searchParams }: {
   return <><Link className="back" href={`/courses/${courseId}`}>Back to {course.code}</Link>
     <span className="eyebrow">{course.code}</span><h1>Question practice</h1>
     <p className="muted">Attempt a question, check your work, then record how you did. Outcomes are self-reported, not automatically graded. Marking a question done is separate.</p>
-    <p className="catalog-links"><Link href={`/courses/${courseId}/exam?order=personal`}>Your exam order</Link><Link href={`/courses/${courseId}/confidence`}>Rate your topics</Link><Link href={`${route}/generated`}>Generate practice questions</Link></p>
+    <p className="catalog-links"><Link href={`/courses/${courseId}/exam?order=personal`}>Your exam order</Link><Link href={`/courses/${courseId}/confidence`}>Rate your topics</Link><Link href={`/courses/${courseId}/topics`}>Your topics</Link><Link href={`${route}/generated`}>Generate practice questions</Link></p>
     {notice.saved === "1" && <p className="notice" role="status">Practice outcome saved. Your course profile and priorities are updated.</p>}
     {notice.error && <p className="notice error" role="alert">{practiceMessage(notice.error)}</p>}
     {!questions.length && <p className="card muted">No published questions are ready for practice yet.</p>}

@@ -15,8 +15,10 @@ const ids = (result: ReturnType<typeof selectMockQuestions>) => (result.ok ? res
 describe("parseMockExamConfig (US-45)", () => {
   it("accepts valid settings and tidies them", () => {
     expect(parseMockExamConfig({ length: " 10 ", difficulty: "hard", topics: [" TCP  Basics ", "tcp basics", ""] })).toEqual({
-      ok: true, config: { topicKeys: ["tcp basics"], length: 10, difficulty: "HARD" },
+      ok: true, config: { topicKeys: ["tcp basics"], length: 10, difficulty: "HARD", includeGenerated: false },
     });
+    // Generated practice questions are only asked for with a real `true`.
+    expect(parseMockExamConfig({ length: "10", difficulty: "HARD", topics: [], includeGenerated: true })).toMatchObject({ config: { includeGenerated: true } });
   });
 
   it.each(["", "2", "51", "abc", "1.5", "-5", "1e1", "0010x"])("refuses the length %j", length => {
