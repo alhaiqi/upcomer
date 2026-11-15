@@ -33,7 +33,7 @@ export default async function MockExamPage({ params, searchParams }: {
     {error && <p className="notice error" role="alert">{sittingMessage(error)}</p>}
     {/* US-49: whether the answers were marked. */}
     {exam.status === "SUBMITTED" && <p className="muted" data-marked={exam.markedAt ? "yes" : "no"}>{exam.markedAt
-      ? "Your answers were marked against the answer keys. See each question below."
+      ? <>Your answers were marked against the answer keys. See each question below, or <Link href={`/courses/${encodeURIComponent(courseId)}/mock-exams/${encodeURIComponent(exam.id)}/results`}>See your results</Link>.</>
       : "Your answers could not be marked yet. Reload the page to try again."}</p>}
     <MockExamSitting exam={exam} />
   </>;

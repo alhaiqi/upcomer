@@ -170,7 +170,7 @@ export async function listMyMockExams(userId: string, courseId: string) {
   try {
     return await db.mockExam.findMany({
       where: { userId, courseId }, orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: MOCK_EXAM_LIST_LIMIT,
-      select: { id: true, length: true, difficulty: true, topics: true, includeGenerated: true, status: true, createdAt: true, submittedAt: true },
+      select: { id: true, length: true, difficulty: true, topics: true, includeGenerated: true, status: true, createdAt: true, submittedAt: true, markedAt: true },
     });
   } catch (error) {
     logError("mock_exam_retrieval_failed", { userId, courseId, entity: "list", errorType: errorType(error) });
