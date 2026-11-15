@@ -1,14 +1,16 @@
 import Link from "next/link";
+import { CoveredLabel } from "@/components/covered-topics";
 import { strengthMessage, type RankedTopic, type TopicStrengths } from "@/lib/topic-strengths-rules";
 import styles from "./topic-strengths.module.css";
 
 // The "Strongest and weakest topics" section of a course's topics page (US-26). Each topic shows what its place rests
 // on (its rating and recorded practice results); nothing here claims mastery. Without enough evidence it shows a clear
-// message and a link to the ratings instead of a list.
+// message and a link to the ratings instead of a list. A topic the student marked as covered (US-32) keeps its place and
+// gets a "Covered" label only.
 
 function Topics({ topics }: { topics: RankedTopic[] }) {
   return <ol className={styles.topics}>
-    {topics.map(topic => <li key={topic.topicKey}><strong>{topic.topic}</strong><span>{topic.evidence}</span></li>)}
+    {topics.map(topic => <li key={topic.topicKey}><strong>{topic.topic}</strong>{topic.covered && <CoveredLabel />}<span>{topic.evidence}</span></li>)}
   </ol>;
 }
 

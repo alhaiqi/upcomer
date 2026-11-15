@@ -13,6 +13,8 @@ vi.mock("@/lib/auth", () => ({ requireUser: mocks.requireUser }));
 vi.mock("@/lib/courses", () => ({ getCourseById: mocks.getCourseById }));
 vi.mock("@/lib/study-next", () => ({ getStudyNext: mocks.getStudyNext }));
 vi.mock("@/lib/topic-strengths", () => ({ getTopicStrengths: mocks.getTopicStrengths, readTopicInputs: mocks.readTopicInputs }));
+// The covered form's action (US-32, tested in topic-covered-pages.test.tsx) is stubbed.
+vi.mock("@/lib/topic-covered-actions", () => ({ setTopicCoveredAction: vi.fn() }));
 import CourseTopicsPage from "@/app/courses/[courseId]/topics/page";
 
 const course = { id: "course-a", code: "EECE350", name: "Computer Networks", faculty: { name: "Engineering" }, professors: [] };
@@ -29,7 +31,7 @@ const section = (html: string) => /<section[^>]*aria-labelledby="study-next">(.*
 beforeEach(() => {
   mocks.requireUser.mockReset().mockResolvedValue({ id: "student-1", role: "STUDENT" });
   mocks.getCourseById.mockReset().mockResolvedValue(course);
-  mocks.readTopicInputs.mockReset().mockResolvedValue({ profile: new Map(), courseTopics: new Map(), totalPapers: 0 });
+  mocks.readTopicInputs.mockReset().mockResolvedValue({ profile: new Map(), courseTopics: new Map(), totalPapers: 0, covered: new Set() });
   mocks.getStudyNext.mockReset().mockResolvedValue(next(routing));
   mocks.getTopicStrengths.mockReset().mockResolvedValue({ state: "no_profile", ranked: [], strongest: [], weakest: [], invalidRows: 0 });
 });

@@ -1,0 +1,9 @@
+.section { margin-top: 1.75rem; }
+.section > h2 { margin-bottom: .35rem; }
+.topics { display: grid; gap: .6rem; margin: 1rem 0 0; padding: 0; list-style: none; }
+.topics li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .5rem 1rem; padding: .7rem 1rem; overflow-wrap: anywhere; }
+.name { display: flex; flex-wrap: wrap; align-items: center; gap: .35rem .6rem; }
+.name span { font-size: .92rem; }
+.form { margin: 0; }
+.form button { margin-top: 0; }
+.label { justify-self: start; border: 1px solid var(--border); border-radius: 999px; background: var(--tint); padding: .05rem .55rem; color: var(--text); font-size: .8rem; font-style: normal; font-weight: 600; }

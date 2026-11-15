@@ -14,7 +14,9 @@ vi.mock("next/navigation", () => ({ notFound: mocks.notFound, redirect: mocks.re
 vi.mock("@/lib/auth", () => ({ requireUser: mocks.requireUser, getCurrentUser: mocks.getCurrentUser }));
 vi.mock("@/lib/courses", () => ({ getCourseById: mocks.getCourseById }));
 // The page's one shared read, and the "Study next" section (US-30, tested in study-next-pages.test.tsx), are stubbed.
-vi.mock("@/lib/topic-strengths", () => ({ getTopicStrengths: mocks.getTopicStrengths, readTopicInputs: vi.fn(async () => "inputs") }));
+vi.mock("@/lib/topic-strengths", () => ({ getTopicStrengths: mocks.getTopicStrengths, readTopicInputs: vi.fn(async () => ({ profile: new Map(), courseTopics: new Map(), totalPapers: 0, covered: new Set() })) }));
+// The covered form's action (US-32, tested in topic-covered-pages.test.tsx) is stubbed.
+vi.mock("@/lib/topic-covered-actions", () => ({ setTopicCoveredAction: vi.fn() }));
 vi.mock("@/lib/study-next", () => ({ getStudyNext: vi.fn(async () => ({ state: "no_topics", recommended: null, ranked: [], coveredTopics: 0, invalidTopics: 0, reasons: [] })) }));
 vi.mock("@/lib/topic-confidence", () => ({ getCourseTopics: mocks.getCourseTopics, getTopicConfidence: mocks.getTopicConfidence, saveTopicConfidence: vi.fn() }));
 vi.mock("@/lib/consolidated-exam", () => ({ getConsolidatedExam: mocks.getConsolidatedExam }));
