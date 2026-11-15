@@ -516,7 +516,6 @@ model Advice {
   @@index([groupId])
 }
 
-<<<<<<< HEAD
 enum LearningSource {
   QUESTION_BANK
   MOCK_EXAM
@@ -580,9 +579,10 @@ model GeneratedPracticeQuestion {
   @@unique([userId, courseId, contentHash])
   @@index([userId, courseId, difficulty])
   @@index([sourceQuestionId])
-=======
+}
+
 // ---------------------------------------------------------------------------------------------------------------------
-// Configurable mock exams (US-45). Added in migration 20261103000000_mock_exams.
+// Configurable mock exams (US-45). Added in migration 20261116000000_mock_exams.
 // ---------------------------------------------------------------------------------------------------------------------
 
 // EASY, MEDIUM and HARD are windows of the course's questions sorted by an estimated complexity (question length and number
@@ -648,5 +648,4 @@ model MockExamQuestion {
 
   @@unique([mockExamId, position])
   @@index([groupId])
->>>>>>> sprint-4-mock-exams
 }
