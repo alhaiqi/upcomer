@@ -147,9 +147,14 @@ export async function getMockExam(userId: string, mockExamId: string) {
       where: { id: mockExamId, userId },
       select: {
         id: true, courseId: true, length: true, difficulty: true, topics: true, includeGenerated: true, status: true, createdAt: true, submittedAt: true,
+        // The marking (US-49).
+        markedAt: true,
         questions: {
           orderBy: { position: "asc" },
-          select: { id: true, position: true, topic: true, text: true, paperCount: true, totalPapers: true, sourcePapers: true, answer: true },
+          select: {
+            id: true, position: true, topic: true, text: true, paperCount: true, totalPapers: true, sourcePapers: true, answer: true,
+            outcome: true, matchedPoints: true, missedPoints: true, feedback: true,
+          },
         },
       },
     });

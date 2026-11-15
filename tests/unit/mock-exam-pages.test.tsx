@@ -13,6 +13,8 @@ const mocks = vi.hoisted(() => ({
 vi.mock("next/navigation", () => ({ notFound: mocks.notFound, redirect: mocks.redirect }));
 vi.mock("@/lib/auth", () => ({ requireUser: mocks.requireUser, getCurrentUser: mocks.getCurrentUser }));
 vi.mock("@/lib/courses", () => ({ getCourseById: mocks.getCourseById }));
+// US-49 marks a submitted exam; its own tests are in tests/unit/mock-marking*.test.ts*.
+vi.mock("@/lib/mock-marking", () => ({ markMockExam: async () => ({ ok: false, error: "unexpected" }) }));
 vi.mock("@/lib/mock-exams", () => ({
   getMockExamOptions: mocks.getMockExamOptions, listMyMockExams: mocks.listMyMockExams, getMockExam: mocks.getMockExam,
   createMockExam: mocks.createMockExam, saveMockExam: mocks.saveMockExam,

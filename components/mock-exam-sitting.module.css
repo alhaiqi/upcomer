@@ -5,3 +5,8 @@
 .actions { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem; margin-top: 1.25rem; }
 .actions button { margin-top: 0; }
 .actions p { flex: 1 1 100%; margin: 0; }
+
+/* US-49: the marking under an answer. */
+.marking { border-top: 1px solid var(--border); margin-top: .75rem; padding-top: .75rem; }
+.marking p { margin: .25rem 0; }
+.feedback { white-space: pre-wrap; }
