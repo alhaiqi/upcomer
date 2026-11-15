@@ -432,6 +432,18 @@ After pulling, run `npx prisma generate` and `npx prisma migrate deploy`. Two mi
 
 - **Shared files changed:** `prisma/schema.prisma` (the conflict, three columns, two back-relation lines on `Question` and `GeneratedPracticeQuestion`), the migration `20261116000001_mock_exam_sources`, `lib/logger.ts` (nine events), `.env.example` (one variable), and `README.md`.
 
+### Course advice feed (US-38, Mohammed Al-Haiqi, Sprint 4)
+
+The feed is the advice page at `/courses/:courseId/advice` with no search or filter (US-34/US-39 built the page; this story makes the feed reliable). Tester's check: the feed displays only relevant visible advice with the correct course and scope.
+
+- **Only this course's visible advice.** Every student-facing advice query starts from `visibleCourseAdvice(courseId)` in `lib/advice.ts`: this course, `VISIBLE`, and not pointing at another course's exam paper or question. Publishing already refuses such a target, so this guards against bad data; such advice is left out, not shown in the wrong course. Newest first, ties broken by ID, 20 a page; an invalid page gives page 1 and a page past the end the last page.
+- **Caching.** The unfiltered feed page is cached in memory for `ADVICE_FEED_CACHE_SECONDS` (default 30; 0 turns it off), at most 500 courses and 50 pages each. The rows are cached and `isMine` is worked out per viewer, so the cache holds nothing viewer-specific that reaches the page. Searches and filters are not cached. **Every code path that writes advice must call `invalidateCourseAdvice(courseId)`** (publishing does). The cache sits on `globalThis` because Next.js bundles server actions apart from the pages; a module-level map would give the publish action its own copy and its invalidation would never reach the page.
+- **DoS:** at most `ADVICE_FEED_RATE_LIMIT_PER_MINUTE` advice page reads per logged-in student per minute (default 120). Over it the page says "You are opening advice pages too quickly. Wait a minute and try again." and reads nothing. Visitors are served from the cache.
+- **Logs and responsiveness:** `operation_timed` lines `advice_feed` (database read) and `advice_feed_cached`, `slow_operation` over 1 s, and `advice_feed_rate_limited` in the events table.
+- **Stored-request cleanup:** not applicable; the feed stores nothing per request.
+- **Tests:** `tests/unit/advice-feed.test.ts`, `tests/unit/advice-feed-page.test.tsx`, `tests/integration/advice-feed.test.ts`, `tests/e2e/advice-feed.spec.ts`, the feed in `npm run availability` (with a correctness check), and `npm run load -- advice-feed`. Details and results: `ADVICE_FEED_REPORT.md`.
+- **Shared files changed:** `lib/advice.ts` (the guard, the cache, the limit; `searchAdvice` keeps its signature), `app/courses/[courseId]/advice/page.tsx` (the limit check), `tests/unit/advice.test.ts` (one line: reset the cache between tests), `lib/logger.ts` (one event), `tests/availability/run.ts`, `.env.example`, and `README.md`.
+
 ### Advice from previous students (US-34, US-35, US-37, US-39): open issues
 
 Built by Ali Shammakh at `/courses/:courseId/advice` (`lib/advice.ts`, `lib/advice-rules.ts`), now owned by Mustafa Ergaibi. A review against the stories found no acceptance failure in the code: scopes are checked against the course, only `https://` links are accepted, an anonymous post never carries its author's name or ID to students, and search and filters stay inside the course. These issues are open and **not fixed yet**:
@@ -760,6 +772,7 @@ The levels live in one table, `EVENT_LEVELS` in `lib/logger.ts`, and TypeScript 
 | Sprint 4, mock exams (US-45) | `mock_exam_saved`, `mock_exam_submitted` | info | `userId`, `mockExamId`, `submit` (never an answer) |
 | Sprint 4, mock exams (US-45) | `mock_exam_save_refused` | warn | `userId`, `mockExamId`, `submit`, `reason` (`not_found`, `already_submitted`, `answer_too_long`) |
 | Sprint 4, mock exams (US-45) | `mock_exam_save_failed` | error | `userId`, `mockExamId`, `submit`, `errorType`, `errorCode` |
+| Mohammed Al-Haiqi (Sprint 4, US-38) | `advice_feed_rate_limited` | warn | `userId`, `retryAfterSeconds`; the student opened advice pages more than `ADVICE_FEED_RATE_LIMIT_PER_MINUTE` times in a minute |
 
 ### What is never logged
 
