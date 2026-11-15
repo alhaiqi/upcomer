@@ -10,15 +10,19 @@ export type MockExamFormState = { status: "idle" | "error"; error?: MockExamErro
 const field = (formData: FormData, name: string) => String(formData.get(name) ?? "");
 
 // The exam's student is always the session user: any user ID in the form is ignored. On a refusal the typed settings come
-// back in the state, so the form keeps them. On success the student goes straight to the exam.
+// back in the state, so the form keeps them. On success the student goes straight to the exam; `same=1` tells the exam
+// page that the difficulty could not choose between the questions.
 export async function createMockExamAction(_previous: MockExamFormState, formData: FormData): Promise<MockExamFormState> {
   const courseId = field(formData, "courseId");
   const route = `/courses/${encodeURIComponent(courseId)}/mock-exams`;
   const user = await requireUser(route);
-  const values: MockExamFormValues = { length: field(formData, "length"), difficulty: field(formData, "difficulty"), topics: formData.getAll("topic").map(String) };
+  const values: MockExamFormValues = {
+    length: field(formData, "length"), difficulty: field(formData, "difficulty"), topics: formData.getAll("topic").map(String),
+    includeGenerated: formData.get("includeGenerated") === "on",
+  };
   const result = await createMockExam(user.id, { courseId, ...values });
   if (!result.ok) return { status: "error", error: result.error, available: result.available, values };
-  redirect(`${route}/${encodeURIComponent(result.id)}`);
+  redirect(`${route}/${encodeURIComponent(result.id)}${result.difficultyApplied ? "" : "?same=1"}`);
 }
 
 // "Save progress" and "Submit exam" are two buttons of one form; the clicked one's value arrives as `intent`.

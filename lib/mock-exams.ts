@@ -5,13 +5,18 @@ import { PUBLISHED_FILES } from "@/lib/file-visibility";
 import { questionTopic } from "@/lib/learning-profile";
 import { errorCode, logError } from "@/lib/logger";
 import {
-  cleanAnswer, MOCK_ANSWER_MAX_LENGTH, parseMockExamConfig, selectMockQuestions, type MockExamError, type MockExamOptions, type PoolQuestion, type SittingError,
+  cleanAnswer, MOCK_ANSWER_MAX_LENGTH, parseMockExamConfig, selectMockQuestions, sourceQuestionOf,
+  type GeneratedCandidate, type MockExamError, type MockExamOptions, type PoolQuestion, type SittingError,
 } from "@/lib/mock-exam-rules";
+import { getGeneratedPracticeQuestions } from "@/lib/practice-generation";
+import { courseExams } from "@/lib/question-bank";
 import { checkRateLimit, limitFromEnv } from "@/lib/rate-limit";
 
 // Configurable mock exams (US-45). A student picks topics, a length, and a difficulty; the exam is drawn from the course's
 // consolidated exam (lib/consolidated-exam.ts), copied into MockExam/MockExamQuestion so it never changes afterwards, and
 // then sat: answers are saved and the exam is submitted. Marking and results are US-49 and US-50.
+// When the student asks for it, up to half of the exam is their own generated practice questions (US-44). Those are read
+// only through getGeneratedPracticeQuestions (Ali Slim's contract), never from the table, and nothing is generated here.
 // Nothing here checks the caller: the pages and actions call requireUser() first and pass the session user's ID, and every
 // read and write of an exam is limited to its own student. Question text and answers are never logged.
 
@@ -33,15 +38,23 @@ export async function buildPool(courseId: string): Promise<PoolQuestion[]> {
     const topic = questionTopic(question.papers.map(paper => ({ topic: topics.get(paper.id) ?? null })));
     return {
       id: question.id, position: question.position, text: question.text, paperCount: question.paperCount, totalPapers: question.totalPapers,
-      topicKey: topic?.topicKey ?? null, topic: topic?.topic ?? null, papers: question.papers.map(paper => ({ title: paper.title, year: paper.year })),
+      topicKey: topic?.topicKey ?? null, topic: topic?.topic ?? null, papers: question.papers.map(paper => ({ id: paper.id, title: paper.title, year: paper.year })),
     };
   });
 }
 
-// The topics a student can build an exam from, with how many questions each has, for the form.
-export async function getMockExamOptions(courseId: string): Promise<MockExamOptions> {
+// The student's generated practice questions an exam can include, newest first: only their own, and only those that still
+// match a published source (getGeneratedPracticeQuestions checks both).
+async function generatedCandidates(userId: string, courseId: string): Promise<GeneratedCandidate[]> {
+  const items = await getGeneratedPracticeQuestions(userId, courseId);
+  return items.map(item => ({ id: item.id, topicKey: item.topicKey, topic: item.topic, difficulty: item.difficulty, text: item.prompt, sourcePaper: item.sourceQuestion.file.title }));
+}
+
+// The topics a student can build an exam from, with how many questions each has, for the form. With a student, also how
+// many generated practice questions they have for this course.
+export async function getMockExamOptions(courseId: string, userId?: string): Promise<MockExamOptions> {
   try {
-    const pool = await buildPool(courseId);
+    const [pool, generated] = await Promise.all([buildPool(courseId), userId ? generatedCandidates(userId, courseId) : Promise.resolve([])]);
     const topics = new Map<string, { key: string; label: string; count: number }>();
     for (const question of pool) {
       if (!question.topicKey || !question.topic) continue;
@@ -49,20 +62,23 @@ export async function getMockExamOptions(courseId: string): Promise<MockExamOpti
       entry.count++;
       topics.set(question.topicKey, entry);
     }
-    return { total: pool.length, topics: [...topics.values()].sort((a, b) => a.label.localeCompare(b.label)) };
+    return { total: pool.length, topics: [...topics.values()].sort((a, b) => a.label.localeCompare(b.label)), generated: generated.length };
   } catch (error) {
     logError("mock_exam_retrieval_failed", { courseId, entity: "options", errorType: errorType(error) });
     throw error;
   }
 }
 
-export type CreateMockExamInput = { courseId: string; length: string; difficulty: string; topics: string[] };
-export type CreateMockExamResult = { ok: true; id: string } | { ok: false; error: MockExamError; available?: number };
+export type CreateMockExamInput = { courseId: string; length: string; difficulty: string; topics: string[]; includeGenerated?: boolean };
+// `difficultyApplied` is false when an EASY, MEDIUM or HARD exam needed every matching past-paper question, so the
+// difficulty could not choose between them.
+export type CreateMockExamResult = { ok: true; id: string; difficultyApplied: boolean } | { ok: false; error: MockExamError; available?: number };
 
 const paperLabel = (paper: { title: string; year: number | null }) => (paper.year ? `${paper.title} (${paper.year})` : paper.title);
 
 // Generates a mock exam for the given student. The exam has exactly the length asked for, only questions of the chosen
 // topics, and the chosen difficulty; if the course cannot give that, nothing is saved and the error says how many questions match.
+// The per-hour limit counts exams that are made: a refused attempt (too few questions, an unknown topic) does not use it up.
 export async function createMockExam(userId: string, input: CreateMockExamInput): Promise<CreateMockExamResult> {
   const context = { userId, courseId: input.courseId.slice(0, 100) || undefined };
   const refuse = (error: MockExamError, available?: number): CreateMockExamResult => {
@@ -72,36 +88,51 @@ export async function createMockExam(userId: string, input: CreateMockExamInput)
   const parsed = parseMockExamConfig(input);
   if (!parsed.ok) return refuse(parsed.error);
   const { config } = parsed;
-  const limit = checkRateLimit(`mock-exam:${userId}`, mockExamLimit(), MOCK_EXAM_RATE_WINDOW_MS);
-  if (!limit.ok) {
-    logError("mock_exam_rate_limited", { ...context, retryAfterSeconds: String(limit.retryAfterSeconds) });
-    return { ok: false, error: "rate_limited" };
-  }
   try {
     const course = await db.course.findUnique({ where: { id: input.courseId }, select: { id: true } });
     if (!course) return refuse("course_not_found");
     const pool = await buildPool(course.id);
     if (!pool.length) return refuse("no_questions");
-    const selected = selectMockQuestions(pool, config);
+    const generated = config.includeGenerated ? await generatedCandidates(userId, course.id) : [];
+    const selected = selectMockQuestions(pool, config, { generated });
     if (!selected.ok) return refuse(selected.error, selected.available);
+    const limit = checkRateLimit(`mock-exam:${userId}`, mockExamLimit(), MOCK_EXAM_RATE_WINDOW_MS);
+    if (!limit.ok) {
+      logError("mock_exam_rate_limited", { ...context, retryAfterSeconds: String(limit.retryAfterSeconds) });
+      return { ok: false, error: "rate_limited" };
+    }
+    // Each past-paper pick records one source question of its group (sourceQuestionOf), for US-49's learning events.
+    const sources = await db.question.findMany({
+      where: { groupId: { in: selected.questions.map(question => question.id) }, file: courseExams(course.id) },
+      select: { id: true, number: true, fileId: true, groupId: true },
+    });
     const labels = new Map(pool.flatMap(question => (question.topicKey && question.topic ? [[question.topicKey, question.topic] as const] : [])));
     const created = await db.mockExam.create({
       data: {
         userId, courseId: course.id, topicKeys: config.topicKeys, topics: config.topicKeys.map(key => labels.get(key) ?? key),
-        length: config.length, difficulty: MockExamDifficulty[config.difficulty],
+        length: config.length, difficulty: MockExamDifficulty[config.difficulty], includeGenerated: config.includeGenerated === true,
         questions: {
-          create: selected.questions.map((question, index) => ({
-            position: index + 1, groupId: question.id, topicKey: question.topicKey, topic: question.topic, text: question.text,
-            paperCount: question.paperCount, totalPapers: question.totalPapers, sourcePapers: question.papers.map(paperLabel),
-          })),
+          create: [
+            ...selected.questions.map((question, index) => ({
+              position: index + 1, groupId: question.id, topicKey: question.topicKey, topic: question.topic, text: question.text,
+              questionId: sourceQuestionOf(question.papers.flatMap(paper => (paper.id ? [{ id: paper.id }] : [])), sources.filter(source => source.groupId === question.id)),
+              paperCount: question.paperCount, totalPapers: question.totalPapers, sourcePapers: question.papers.map(paperLabel),
+            })),
+            // Generated questions follow the past-paper ones. They appeared in no paper, so paperCount is 0.
+            ...selected.generated.map((item, index) => ({
+              position: selected.questions.length + index + 1, generatedQuestionId: item.id, topicKey: item.topicKey, topic: item.topic, text: item.text,
+              paperCount: 0, totalPapers: pool[0].totalPapers, sourcePapers: [item.sourcePaper],
+            })),
+          ],
         },
       },
       select: { id: true },
     });
     logError("mock_exam_created", {
       ...context, mockExamId: created.id, difficulty: config.difficulty, length: String(config.length), topicCount: String(config.topicKeys.length),
+      generatedCount: String(selected.generated.length),
     });
-    return { ok: true, id: created.id };
+    return { ok: true, id: created.id, difficultyApplied: selected.narrowed || config.difficulty === "MIXED" };
   } catch (error) {
     logError("mock_exam_failed", { ...context, errorType: errorType(error), errorCode: errorCode(error) });
     return { ok: false, error: "unexpected" };
@@ -115,7 +146,7 @@ export async function getMockExam(userId: string, mockExamId: string) {
     return await db.mockExam.findFirst({
       where: { id: mockExamId, userId },
       select: {
-        id: true, courseId: true, length: true, difficulty: true, topics: true, status: true, createdAt: true, submittedAt: true,
+        id: true, courseId: true, length: true, difficulty: true, topics: true, includeGenerated: true, status: true, createdAt: true, submittedAt: true,
         questions: {
           orderBy: { position: "asc" },
           select: { id: true, position: true, topic: true, text: true, paperCount: true, totalPapers: true, sourcePapers: true, answer: true },
@@ -134,7 +165,7 @@ export async function listMyMockExams(userId: string, courseId: string) {
   try {
     return await db.mockExam.findMany({
       where: { userId, courseId }, orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: MOCK_EXAM_LIST_LIMIT,
-      select: { id: true, length: true, difficulty: true, topics: true, status: true, createdAt: true, submittedAt: true },
+      select: { id: true, length: true, difficulty: true, topics: true, includeGenerated: true, status: true, createdAt: true, submittedAt: true },
     });
   } catch (error) {
     logError("mock_exam_retrieval_failed", { userId, courseId, entity: "list", errorType: errorType(error) });

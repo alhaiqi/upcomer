@@ -9,6 +9,7 @@ const db = vi.hoisted(() => {
     tx,
     course: { findUnique: vi.fn() },
     courseFile: { findMany: vi.fn() },
+    question: { findMany: vi.fn() },
     mockExam: { create: vi.fn(), findFirst: vi.fn(), findMany: vi.fn() },
     $transaction: vi.fn(async (callback: (client: typeof tx) => Promise<unknown>, options?: unknown) => { void options; return callback(tx); }),
   };
@@ -16,6 +17,8 @@ const db = vi.hoisted(() => {
 const consolidated = vi.hoisted(() => ({ getConsolidatedExam: vi.fn() }));
 vi.mock("@/lib/db", () => ({ db }));
 vi.mock("@/lib/consolidated-exam", () => consolidated);
+// Generated practice questions (US-44) are covered in mock-exam-generated.test.ts; here the student has none.
+vi.mock("@/lib/practice-generation", () => ({ getGeneratedPracticeQuestions: vi.fn(async () => []) }));
 vi.mock("@/lib/logger", () => ({ logError: vi.fn(), errorCode: (error: unknown) => (error as { code?: string } | null)?.code }));
 vi.mock("@/lib/rate-limit", () => ({ checkRateLimit: vi.fn(() => ({ ok: true })), limitFromEnv: (_name: string, fallback: number) => fallback }));
 
@@ -34,11 +37,12 @@ beforeEach(() => {
   db.courseFile.findMany.mockResolvedValue([{ id: "p1", topic: "Networking Basics" }, { id: "p2", topic: " databases " }]);
   consolidated.getConsolidatedExam.mockResolvedValue({ totalPapers: 2, questions: [1, 2, 3, 4].map(index => examQuestion(index, "p1")).concat([5, 6, 7, 8].map(index => examQuestion(index, "p2"))) });
   db.mockExam.create.mockResolvedValue({ id: "mock-1" });
+  db.question.findMany.mockResolvedValue([]);
 });
 
 describe("createMockExam (US-45)", () => {
   it("stores the settings and a copy of exactly the questions asked for", async () => {
-    expect(await createMockExam("user-1", input({ topics: ["Databases"], difficulty: "HARD" }))).toEqual({ ok: true, id: "mock-1" });
+    expect(await createMockExam("user-1", input({ topics: ["Databases"], difficulty: "HARD" }))).toEqual({ ok: true, id: "mock-1", difficultyApplied: true });
     const data = db.mockExam.create.mock.calls[0][0].data;
     expect(data).toMatchObject({ userId: "user-1", courseId: "course-1", length: 3, difficulty: "HARD", topicKeys: ["databases"], topics: ["databases"] });
     expect(data.questions.create).toHaveLength(3);
@@ -79,6 +83,22 @@ describe("createMockExam (US-45)", () => {
     expect(db.courseFile.findMany.mock.calls[0][0].where).toMatchObject({ courseId: "course-1" });
   });
 
+  it("does not count a refused attempt towards the hourly limit", async () => {
+    expect(await createMockExam("user-1", input({ topics: ["databases"], length: "5" }))).toMatchObject({ ok: false, error: "not_enough_questions" });
+    expect(await createMockExam("user-1", input({ topics: ["quantum"] }))).toMatchObject({ ok: false, error: "topic_invalid" });
+    expect(checkRateLimit).not.toHaveBeenCalled();
+    expect(await createMockExam("user-1", input())).toMatchObject({ ok: true });
+    expect(checkRateLimit).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(checkRateLimit).mock.calls[0][0]).toBe("mock-exam:user-1");
+  });
+
+  it("says when the difficulty could not choose between the questions", async () => {
+    // Databases has four questions: an exam of four needs them all, whatever the difficulty.
+    expect(await createMockExam("user-1", input({ topics: ["databases"], length: "4", difficulty: "EASY" }))).toMatchObject({ ok: true, difficultyApplied: false });
+    expect(await createMockExam("user-1", input({ topics: ["databases"], length: "4", difficulty: "MIXED" }))).toMatchObject({ ok: true, difficultyApplied: true });
+    expect(await createMockExam("user-1", input({ topics: ["databases"], length: "3", difficulty: "EASY" }))).toMatchObject({ ok: true, difficultyApplied: true });
+  });
+
   it("stops a student who generates too much", async () => {
     vi.mocked(checkRateLimit).mockReturnValueOnce({ ok: false, retryAfterSeconds: 30 } as ReturnType<typeof checkRateLimit>);
     expect(await createMockExam("user-1", input())).toEqual({ ok: false, error: "rate_limited" });
@@ -94,7 +114,7 @@ describe("createMockExam (US-45)", () => {
 describe("getMockExamOptions", () => {
   it("counts the questions of each topic", async () => {
     expect(await getMockExamOptions("course-1")).toEqual({
-      total: 8, topics: [{ key: "databases", label: "databases", count: 4 }, { key: "networking basics", label: "Networking Basics", count: 4 }],
+      total: 8, topics: [{ key: "databases", label: "databases", count: 4 }, { key: "networking basics", label: "Networking Basics", count: 4 }], generated: 0,
     });
   });
 });
