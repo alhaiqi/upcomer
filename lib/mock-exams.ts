@@ -5,7 +5,7 @@ import { PUBLISHED_FILES } from "@/lib/file-visibility";
 import { questionTopic } from "@/lib/learning-profile";
 import { errorCode, logError } from "@/lib/logger";
 import {
-  MOCK_ANSWER_MAX_LENGTH, parseMockExamConfig, selectMockQuestions, type MockExamError, type MockExamOptions, type PoolQuestion, type SittingError,
+  cleanAnswer, MOCK_ANSWER_MAX_LENGTH, parseMockExamConfig, selectMockQuestions, type MockExamError, type MockExamOptions, type PoolQuestion, type SittingError,
 } from "@/lib/mock-exam-rules";
 import { checkRateLimit, limitFromEnv } from "@/lib/rate-limit";
 
@@ -18,6 +18,8 @@ import { checkRateLimit, limitFromEnv } from "@/lib/rate-limit";
 export const MOCK_EXAM_RATE_WINDOW_MS = 60 * 60_000;
 export const mockExamLimit = () => limitFromEnv("MOCK_EXAM_RATE_LIMIT_PER_HOUR", 20);
 export const MOCK_EXAM_LIST_LIMIT = 20;
+// The database is remote: an interactive transaction needs more than the default 5 seconds (as in lib/topic-confidence.ts).
+const SAVE_TRANSACTION = { maxWait: 10_000, timeout: 20_000 };
 
 const errorType = (error: unknown) => (error instanceof Error ? error.name : "Unknown");
 
@@ -151,9 +153,13 @@ class Refused extends Error {
 // Saves the student's answers (keyed by the exam question's ID), and with `submit` also submits the exam. Answers of other
 // exams' questions are ignored. A submitted exam cannot change: claiming the exam and writing the answers are one
 // transaction, so two tabs can never both submit it, and nothing is written once it is submitted.
+// Answers are tidied first (cleanAnswer), so the length limit counts a line break once, as the browser's maxLength does.
+// All answers are written by one statement that touches only this exam's questions and only the answers that changed: a
+// 50-question exam is one round trip, not 50, which matters on a remote database.
 export async function saveMockExam(userId: string, mockExamId: string, answers: Record<string, string>, submit: boolean): Promise<SittingResult> {
   const context = { userId, mockExamId: mockExamId.slice(0, 100), submit: String(submit) };
-  if (Object.values(answers).some(answer => answer.length > MOCK_ANSWER_MAX_LENGTH)) {
+  const cleaned = Object.entries(answers).map(([id, raw]) => [id, cleanAnswer(raw)] as const);
+  if (cleaned.some(([, answer]) => answer.length > MOCK_ANSWER_MAX_LENGTH)) {
     logError("mock_exam_save_refused", { ...context, reason: "answer_too_long" });
     return { ok: false, error: "answer_too_long" };
   }
@@ -168,13 +174,17 @@ export async function saveMockExam(userId: string, mockExamId: string, answers: 
         const exists = await tx.mockExam.findFirst({ where: { id: mockExamId, userId }, select: { id: true } });
         throw new Refused(exists ? "already_submitted" : "not_found");
       }
-      const own = new Set((await tx.mockExamQuestion.findMany({ where: { mockExamId }, select: { id: true } })).map(question => question.id));
-      for (const [id, raw] of Object.entries(answers)) {
-        if (!own.has(id)) continue;
-        const answer = raw.replace(/\r\n?/g, "\n").trim();
-        await tx.mockExamQuestion.update({ where: { id }, data: answer ? { answer, answeredAt: now } : { answer: null, answeredAt: null } });
-      }
-    });
+      if (!cleaned.length) return;
+      const ids = cleaned.map(([id]) => id);
+      // An empty answer is sent as '' and stored as NULL.
+      const texts = cleaned.map(([, answer]) => answer);
+      await tx.$executeRaw`
+        UPDATE "MockExamQuestion" AS question
+        SET "answer" = NULLIF(sent.answer, ''), "answeredAt" = CASE WHEN sent.answer = '' THEN NULL ELSE ${now}::timestamp END
+        FROM unnest(${ids}::text[], ${texts}::text[]) AS sent(id, answer)
+        WHERE question."id" = sent.id AND question."mockExamId" = ${mockExamId}
+          AND question."answer" IS DISTINCT FROM NULLIF(sent.answer, '')`;
+    }, SAVE_TRANSACTION);
     logError(submit ? "mock_exam_submitted" : "mock_exam_saved", context);
     return { ok: true, submitted: submit };
   } catch (error) {

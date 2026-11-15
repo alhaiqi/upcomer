@@ -13,7 +13,7 @@ export default async function MockExamPage({ params, searchParams }: {
 }) {
   const { courseId, mockExamId } = await params;
   const { saved, submitted, error } = await searchParams;
-  const user = await requireUser(`/courses/${courseId}/mock-exams/${mockExamId}`);
+  const user = await requireUser(`/courses/${encodeURIComponent(courseId)}/mock-exams/${encodeURIComponent(mockExamId)}`);
   const [course, exam] = await Promise.all([getCourseById(courseId), getMockExam(user.id, mockExamId)]);
   // Another student's exam, or one of another course, looks the same as one that doesn't exist.
   if (!course || !exam || exam.courseId !== courseId) notFound();

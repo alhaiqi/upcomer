@@ -5,6 +5,8 @@ export const MOCK_EXAM_MIN_LENGTH = 3;
 export const MOCK_EXAM_MAX_LENGTH = 50;
 export const MOCK_EXAM_DEFAULT_LENGTH = 10;
 export const MOCK_ANSWER_MAX_LENGTH = 5000;
+// An answer as it is stored and measured: browsers post line breaks as "\r\n", which count once, and outer space is dropped.
+export const cleanAnswer = (value: string) => value.replace(/\r\n?/g, "\n").trim();
 
 export const MOCK_EXAM_DIFFICULTIES = ["EASY", "MEDIUM", "HARD", "MIXED"] as const;
 export type MockExamDifficultyName = (typeof MOCK_EXAM_DIFFICULTIES)[number];

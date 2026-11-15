@@ -107,7 +107,7 @@ describe("US-45: the exam follows the chosen constraints", () => {
     const exam = await examOf(await mustGenerate({ topics: ["databases"] }));
     for (const question of exam.questions) {
       expect(question).toMatchObject({ paperCount: 1, totalPapers: 2 });
-      expect(question.sourcePapers).toEqual([`Databases final ${run} (2025)`]);
+      expect(question.sourcePapers).toEqual(["Databases final (2025)"]);
     }
   });
 
@@ -159,6 +159,31 @@ describe("US-45: the sitting flow", () => {
     const id = await mustGenerate();
     const [question] = (await examOf(id)).questions;
     expect(await saveMockExam(ids.student, id, { [question.id]: "x".repeat(5001) }, false)).toEqual({ ok: false, error: "answer_too_long" });
+  });
+
+  it("counts a line break once, so an answer the browser allowed is saved", async () => {
+    const id = await mustGenerate();
+    const [question] = (await examOf(id)).questions;
+    // 4999 characters as typed; a browser posts each line break as two.
+    const posted = Array.from({ length: 2500 }, () => "x").join("\r\n");
+    expect(await saveMockExam(ids.student, id, { [question.id]: posted }, false)).toEqual({ ok: true, submitted: false });
+    expect((await examOf(id)).questions[0].answer).toHaveLength(4999);
+  });
+
+  it("saves every answer of an exam in one go, and leaves unchanged answers alone", async () => {
+    const id = await mustGenerate({ length: "8" });
+    const exam = await examOf(id);
+    const answers = Object.fromEntries(exam.questions.map(question => [question.id, `answer ${question.position}`]));
+    expect(await saveMockExam(ids.student, id, answers, false)).toEqual({ ok: true, submitted: false });
+    const first = await db.mockExamQuestion.findMany({ where: { mockExamId: id }, orderBy: { position: "asc" }, select: { id: true, answer: true, answeredAt: true } });
+    expect(first.map(question => question.answer)).toEqual(exam.questions.map(question => `answer ${question.position}`));
+    // Saving again with one answer changed moves only that answer's time.
+    await new Promise(resolve => setTimeout(resolve, 20));
+    expect(await saveMockExam(ids.student, id, { ...answers, [first[0].id]: "changed" }, false)).toEqual({ ok: true, submitted: false });
+    const second = await db.mockExamQuestion.findMany({ where: { mockExamId: id }, orderBy: { position: "asc" }, select: { answer: true, answeredAt: true } });
+    expect(second[0].answer).toBe("changed");
+    expect(second[0].answeredAt!.getTime()).toBeGreaterThan(first[0].answeredAt!.getTime());
+    expect(second.slice(1)).toEqual(first.slice(1).map(({ answer, answeredAt }) => ({ answer, answeredAt })));
   });
 
   it("lets only the student see or change their exam", async () => {

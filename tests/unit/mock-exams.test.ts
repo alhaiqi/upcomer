@@ -3,14 +3,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const db = vi.hoisted(() => {
   const tx = {
     mockExam: { updateMany: vi.fn(), findFirst: vi.fn() },
-    mockExamQuestion: { findMany: vi.fn(), update: vi.fn() },
+    $executeRaw: vi.fn(),
   };
   return {
     tx,
     course: { findUnique: vi.fn() },
     courseFile: { findMany: vi.fn() },
     mockExam: { create: vi.fn(), findFirst: vi.fn(), findMany: vi.fn() },
-    $transaction: vi.fn(async (callback: (client: typeof tx) => Promise<unknown>) => callback(tx)),
+    $transaction: vi.fn(async (callback: (client: typeof tx) => Promise<unknown>, options?: unknown) => { void options; return callback(tx); }),
   };
 });
 const consolidated = vi.hoisted(() => ({ getConsolidatedExam: vi.fn() }));
@@ -107,29 +107,59 @@ describe("getMockExam", () => {
   });
 });
 
+// The one statement that writes the answers: its SQL text, and its values in order (now, IDs, answers, exam ID).
+const written = () => {
+  const [strings, ...values] = db.tx.$executeRaw.mock.calls[0] as [string[], ...unknown[]];
+  return { sql: strings.join("?"), values };
+};
+
 describe("saveMockExam (the sitting flow)", () => {
-  it("saves answers of the exam's own questions and trims them", async () => {
+  it("writes every answer in one statement, tidied, for this exam's questions only", async () => {
     db.tx.mockExam.updateMany.mockResolvedValue({ count: 1 });
-    db.tx.mockExamQuestion.findMany.mockResolvedValue([{ id: "q1" }, { id: "q2" }]);
     expect(await saveMockExam("user-1", "mock-1", { q1: "  my answer \r\n", q2: "   ", other: "not mine" }, false)).toEqual({ ok: true, submitted: false });
     expect(db.tx.mockExam.updateMany.mock.calls[0][0].where).toMatchObject({ id: "mock-1", userId: "user-1", status: "IN_PROGRESS" });
-    expect(db.tx.mockExamQuestion.update).toHaveBeenCalledTimes(2);
-    expect(db.tx.mockExamQuestion.update.mock.calls[0][0]).toMatchObject({ where: { id: "q1" }, data: { answer: "my answer" } });
-    expect(db.tx.mockExamQuestion.update.mock.calls[1][0]).toMatchObject({ where: { id: "q2" }, data: { answer: null, answeredAt: null } });
+    expect(db.tx.$executeRaw).toHaveBeenCalledTimes(1);
+    const { sql, values } = written();
+    expect(values).toEqual([expect.any(Date), ["q1", "q2", "other"], ["my answer", "", "not mine"], "mock-1"]);
+    // An ID of another exam's question matches no row, an empty answer is stored as NULL, and an unchanged one is not rewritten.
+    expect(sql).toContain('question."mockExamId" = ?');
+    expect(sql).toContain("NULLIF(sent.answer, '')");
+    expect(sql).toContain("IS DISTINCT FROM");
+  });
+
+  it("gives the transaction time on a remote database", async () => {
+    db.tx.mockExam.updateMany.mockResolvedValue({ count: 1 });
+    await saveMockExam("user-1", "mock-1", { q1: "a" }, false);
+    expect(db.$transaction.mock.calls[0][1]).toEqual({ maxWait: 10_000, timeout: 20_000 });
+  });
+
+  it("counts a line break once, as the browser's limit does", async () => {
+    db.tx.mockExam.updateMany.mockResolvedValue({ count: 1 });
+    // 2500 lines of one character: 4999 characters as typed, 7498 as a browser posts them.
+    const posted = Array.from({ length: 2500 }, () => "x").join("\r\n");
+    expect(posted.length).toBeGreaterThan(5000);
+    expect(await saveMockExam("user-1", "mock-1", { q1: posted }, false)).toEqual({ ok: true, submitted: false });
+    expect((written().values[2] as string[])[0]).toHaveLength(4999);
   });
 
   it("submits by moving the exam to SUBMITTED in the same transaction", async () => {
     db.tx.mockExam.updateMany.mockResolvedValue({ count: 1 });
-    db.tx.mockExamQuestion.findMany.mockResolvedValue([{ id: "q1" }]);
     expect(await saveMockExam("user-1", "mock-1", { q1: "final" }, true)).toEqual({ ok: true, submitted: true });
     expect(db.tx.mockExam.updateMany.mock.calls[0][0].data).toMatchObject({ status: "SUBMITTED" });
+    expect(db.tx.$executeRaw).toHaveBeenCalledTimes(1);
+  });
+
+  it("submits without answers without writing any", async () => {
+    db.tx.mockExam.updateMany.mockResolvedValue({ count: 1 });
+    expect(await saveMockExam("user-1", "mock-1", {}, true)).toEqual({ ok: true, submitted: true });
+    expect(db.tx.$executeRaw).not.toHaveBeenCalled();
   });
 
   it("refuses to change an exam that was already submitted", async () => {
     db.tx.mockExam.updateMany.mockResolvedValue({ count: 0 });
     db.tx.mockExam.findFirst.mockResolvedValue({ id: "mock-1" });
     expect(await saveMockExam("user-1", "mock-1", { q1: "late" }, false)).toEqual({ ok: false, error: "already_submitted" });
-    expect(db.tx.mockExamQuestion.update).not.toHaveBeenCalled();
+    expect(db.tx.$executeRaw).not.toHaveBeenCalled();
   });
 
   it("says not found for an exam that is not the student's", async () => {
