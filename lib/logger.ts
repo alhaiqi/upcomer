@@ -106,7 +106,16 @@ type LogEvent =
   | "topic_covered_saved"
   | "topic_covered_refused"
   | "topic_covered_rate_limited"
-  | "topic_covered_save_failed";
+  | "topic_covered_save_failed"
+  | "mock_exam_created"
+  | "mock_exam_refused"
+  | "mock_exam_rate_limited"
+  | "mock_exam_failed"
+  | "mock_exam_retrieval_failed"
+  | "mock_exam_saved"
+  | "mock_exam_submitted"
+  | "mock_exam_save_refused"
+  | "mock_exam_save_failed";
 
 
 export type { LogEvent };
@@ -249,6 +258,17 @@ export const EVENT_LEVELS: Record<LogEvent, LogLevel> = {
   topic_covered_refused: "warn",
   topic_covered_rate_limited: "warn",
   topic_covered_save_failed: "error",
+  // Sprint 4: configurable mock exams (US-45; Ali Shammakh, taken over by Mustafa Ergaibi). IDs, the settings (length,
+  // difficulty, a topic count), reason codes, and error types only; question text and answers are never logged.
+  mock_exam_created: "info",
+  mock_exam_refused: "warn",
+  mock_exam_rate_limited: "warn",
+  mock_exam_failed: "error",
+  mock_exam_retrieval_failed: "error",
+  mock_exam_saved: "info",
+  mock_exam_submitted: "info",
+  mock_exam_save_refused: "warn",
+  mock_exam_save_failed: "error",
 
 };
 
