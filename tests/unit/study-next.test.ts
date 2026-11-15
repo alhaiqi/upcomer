@@ -70,7 +70,7 @@ describe("the recommended topic", () => {
   });
   it("is null with a clear message when the course has no topics", () => {
     const result = recommendNext(profile({ tcp: { weakness: 1 } }), new Map(), 3);
-    expect(result).toEqual({ state: "no_topics", recommended: null, ranked: [], invalidTopics: 0, reasons: [] });
+    expect(result).toEqual({ state: "no_topics", recommended: null, ranked: [], coveredTopics: 0, invalidTopics: 0, reasons: [] });
     expect(NO_TOPICS_TO_RECOMMEND).toBe("This course's exam papers have no topics yet, so there is no topic to recommend.");
   });
 });

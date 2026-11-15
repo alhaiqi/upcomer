@@ -22,7 +22,7 @@ const routing: StudyTopic = {
   topicKey: "routing", topic: "Routing", paperCount: 2, totalPapers: 5, weakness: 0.8, priority: 1.04, rated: true,
   reason: "In 2 of this course's 5 published exam papers. Rated 3 of 5, 0 correct and 3 incorrect.", explanation,
 };
-const next = (recommended: StudyTopic | null): StudyNext => ({ state: recommended ? "ok" : "no_topics", recommended, ranked: recommended ? [recommended] : [], invalidTopics: 0, reasons: [] });
+const next = (recommended: StudyTopic | null): StudyNext => ({ state: recommended ? "ok" : "no_topics", recommended, ranked: recommended ? [recommended] : [], coveredTopics: 0, invalidTopics: 0, reasons: [] });
 // The "Study next" section alone.
 const section = (html: string) => /<section[^>]*aria-labelledby="study-next">(.*?)<\/section>/.exec(html)?.[1] ?? "";
 

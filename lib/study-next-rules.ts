@@ -20,11 +20,14 @@ export type StudyTopic = {
   explanation: string;
 };
 export type StudyNext = {
-  state: "ok" | "no_topics";
-  // The first topic of `ranked`; null without topics.
+  // all_covered: the course has topics, and the student marked every one as covered (US-32).
+  state: "ok" | "no_topics" | "all_covered";
+  // The first topic of `ranked`; null when that list is empty.
   recommended: StudyTopic | null;
-  // Every topic of the course, highest priority first. US-32 leaves covered topics out of this list before the pick.
+  // Every topic of the course the student has not marked as covered, highest priority first.
   ranked: StudyTopic[];
+  // How many of the course's topics were left out because the student marked them as covered (US-32).
+  coveredTopics: number;
   // Topics whose priority inputs were invalid and replaced by safe values, and why (for one log line).
   invalidTopics: number;
   reasons: PriorityReason[];
@@ -34,11 +37,17 @@ const byName = (a: StudyTopic, b: StudyTopic) => (a.topicKey < b.topicKey ? -1 :
 
 // `profile` is the student's profile in this course (getLearningProfile), `courseTopics` the course's published
 // exam-paper topics by topic key, and `totalPapers` the number of the course's published exam papers, tagged or not.
-// A profile row for any other topic is ignored.
-export function recommendNext(profile: LearningProfile, courseTopics: ReadonlyMap<string, CourseTopicCount>, totalPapers: number): StudyNext {
+// A profile row for any other topic is ignored. `covered` is the topic keys the student marked as already covered in
+// this course (US-32): those topics are left out before the pick, and nothing else about the others changes. A covered
+// key that is not a course topic is ignored.
+export function recommendNext(
+  profile: LearningProfile, courseTopics: ReadonlyMap<string, CourseTopicCount>, totalPapers: number, covered: ReadonlySet<string> = new Set(),
+): StudyNext {
   const reasons = new Set<PriorityReason>();
   let invalidTopics = 0;
-  const topics = [...courseTopics].map(([topicKey, course]): StudyTopic => {
+  const candidates = [...courseTopics].filter(([topicKey]) => !covered.has(topicKey));
+  const coveredTopics = courseTopics.size - candidates.length;
+  const topics = candidates.map(([topicKey, course]): StudyTopic => {
     const row = profile.get(topicKey);
     const weakness = row?.weakness ?? NEUTRAL_WEAKNESS;
     const checked = checkedPriority(course.paperCount, totalPapers, weakness);
@@ -65,7 +74,11 @@ export function recommendNext(profile: LearningProfile, courseTopics: ReadonlyMa
     else groups.push([topic]);
   }
   const ranked = groups.flatMap(group => group.sort((a, b) => b.paperCount - a.paperCount || byName(a, b)));
-  return { state: ranked.length ? "ok" : "no_topics", recommended: ranked[0] ?? null, ranked, invalidTopics, reasons: [...reasons].sort() };
+  const state = ranked.length ? "ok" : courseTopics.size ? "all_covered" : "no_topics";
+  return { state, recommended: ranked[0] ?? null, ranked, coveredTopics, invalidTopics, reasons: [...reasons].sort() };
 }
 
 export const NO_TOPICS_TO_RECOMMEND = "This course's exam papers have no topics yet, so there is no topic to recommend.";
+export const ALL_TOPICS_COVERED = "You marked every topic of this course as covered, so there is no topic to recommend. Undo one below to get a recommendation again.";
+// The line under a recommendation when some topics are left out.
+export const coveredLeftOut = (count: number) => `${count} ${count === 1 ? "topic" : "topics"} you marked as covered ${count === 1 ? "is" : "are"} left out.`;

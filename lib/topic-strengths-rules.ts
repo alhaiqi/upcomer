@@ -16,6 +16,8 @@ export type CourseTopicCount = { topic: string; paperCount: number };
 export type RankedTopic = {
   topicKey: string; topic: string; weakness: number; confidence: number | null; correctCount: number; incorrectCount: number;
   paperCount: number; evidence: string;
+  // The student marked the topic as already covered (US-32). A label only: it never changes the topic's place.
+  covered: boolean;
 };
 // ok: there is something to show. level: enough topics, but none differs from the others. The rest are insufficient data.
 export type StrengthState = "ok" | "level" | "no_topics" | "no_profile" | "no_evidence" | "too_few";
@@ -63,7 +65,9 @@ function rank(topics: RankedTopic[]): Array<{ topic: RankedTopic; group: number 
 
 // The student's strongest and weakest topics in one course. `profile` is that course's profile (getLearningProfile) and
 // `courseTopics` the course's published exam-paper topics by topic key; a profile row for any other topic is ignored.
-export function selectStrengths(profile: LearningProfile, courseTopics: ReadonlyMap<string, CourseTopicCount>): TopicStrengths {
+// `covered` is the topic keys the student marked as already covered (US-32). It only sets each topic's `covered` label:
+// covered is not evidence, so it never adds a topic to a list, removes one, or moves one.
+export function selectStrengths(profile: LearningProfile, courseTopics: ReadonlyMap<string, CourseTopicCount>, covered: ReadonlySet<string> = new Set()): TopicStrengths {
   const none = (state: StrengthState, ranked: RankedTopic[] = [], invalidRows = 0): TopicStrengths => ({ state, ranked, strongest: [], weakest: [], invalidRows });
   if (!courseTopics.size) return none("no_topics");
   const rows = [...profile.values()].filter(row => courseTopics.has(row.topicKey));
@@ -75,6 +79,7 @@ export function selectStrengths(profile: LearningProfile, courseTopics: Readonly
     return {
       topicKey: row.topicKey, topic: course.topic, weakness: row.weakness, confidence: row.confidence ?? null,
       correctCount: row.correctCount ?? 0, incorrectCount: row.incorrectCount ?? 0, paperCount: course.paperCount, evidence: describeEvidence(row),
+      covered: covered.has(row.topicKey),
     };
   }));
   const topics = ranked.map(item => item.topic);

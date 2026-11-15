@@ -15,7 +15,7 @@ vi.mock("@/lib/auth", () => ({ requireUser: mocks.requireUser, getCurrentUser: m
 vi.mock("@/lib/courses", () => ({ getCourseById: mocks.getCourseById }));
 // The page's one shared read, and the "Study next" section (US-30, tested in study-next-pages.test.tsx), are stubbed.
 vi.mock("@/lib/topic-strengths", () => ({ getTopicStrengths: mocks.getTopicStrengths, readTopicInputs: vi.fn(async () => "inputs") }));
-vi.mock("@/lib/study-next", () => ({ getStudyNext: vi.fn(async () => ({ state: "no_topics", recommended: null, ranked: [], invalidTopics: 0, reasons: [] })) }));
+vi.mock("@/lib/study-next", () => ({ getStudyNext: vi.fn(async () => ({ state: "no_topics", recommended: null, ranked: [], coveredTopics: 0, invalidTopics: 0, reasons: [] })) }));
 vi.mock("@/lib/topic-confidence", () => ({ getCourseTopics: mocks.getCourseTopics, getTopicConfidence: mocks.getTopicConfidence, saveTopicConfidence: vi.fn() }));
 vi.mock("@/lib/consolidated-exam", () => ({ getConsolidatedExam: mocks.getConsolidatedExam }));
 vi.mock("@/lib/question-progress", () => ({ getCourseProgress: mocks.getCourseProgress }));
@@ -30,7 +30,7 @@ const course = { id: "course-a", code: "EECE350", name: "Computer Networks", fac
 const student = { id: "student-1", role: "STUDENT" };
 const page = (courseId = course.id) => CourseTopicsPage({ params: Promise.resolve({ courseId }) }).then(renderToStaticMarkup);
 const topic = (name: string, weakness: number, evidence: string): RankedTopic =>
-  ({ topicKey: name.toLowerCase(), topic: name, weakness, confidence: 3, correctCount: 0, incorrectCount: 0, paperCount: 1, evidence });
+  ({ topicKey: name.toLowerCase(), topic: name, weakness, confidence: 3, correctCount: 0, incorrectCount: 0, paperCount: 1, evidence, covered: false });
 const dns = topic("DNS", 0.9, "Rated 1 of 5, 0 correct and 2 incorrect");
 const routing = topic("Routing", 0.5, "Not rated, 1 correct and 1 incorrect");
 const tcp = topic("TCP", 0.1, "Rated 5 of 5, no practice recorded");
