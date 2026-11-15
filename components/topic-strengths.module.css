@@ -1,0 +1,7 @@
+.section { margin-top: 1.75rem; }
+.section > h2 { margin-bottom: .35rem; }
+.lists { margin-top: 1rem; }
+.topics { display: grid; gap: .7rem; margin: 0; padding: 0; list-style: none; }
+.topics li { display: grid; gap: .1rem; overflow-wrap: anywhere; }
+.topics span { color: var(--muted); font-size: .92rem; }
+.level { margin-top: 1rem; }
