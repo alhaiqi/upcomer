@@ -98,7 +98,9 @@ type LogEvent =
   | "topic_confidence_saved"
   | "topic_confidence_refused"
   | "topic_confidence_rate_limited"
-  | "topic_confidence_save_failed";
+  | "topic_confidence_save_failed"
+  | "topic_strengths_retrieval_failed"
+  | "topic_strengths_invalid_data";
 
 
 export type { LogEvent };
@@ -227,6 +229,10 @@ export const EVENT_LEVELS: Record<LogEvent, LogLevel> = {
   topic_confidence_refused: "warn",
   topic_confidence_rate_limited: "warn",
   topic_confidence_save_failed: "error",
+  // Mustafa Ergaibi (Sprint 4): topic metrics, strongest and weakest topics (US-26). IDs, the failed read, a count, and
+  // error types only; topics are never logged.
+  topic_strengths_retrieval_failed: "error",
+  topic_strengths_invalid_data: "warn",
 
 };
 

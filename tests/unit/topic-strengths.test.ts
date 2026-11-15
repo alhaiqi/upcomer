@@ -1,7 +1,9 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { LearningProfile, ProfileTopic } from "@/lib/learning-profile";
 
-vi.mock("@/lib/db", () => ({ db: {} }));
+const { courseFile, learningTopic } = vi.hoisted(() => ({ courseFile: { findMany: vi.fn() }, learningTopic: { findMany: vi.fn() } }));
+vi.mock("@/lib/db", () => ({ db: { courseFile, learningTopic } }));
+import { getTopicStrengths } from "@/lib/topic-strengths";
 import { describeEvidence, hasEvidence, MAX_LISTED, selectStrengths, strengthMessage, WEAKNESS_TIE, type CourseTopicCount } from "@/lib/topic-strengths-rules";
 
 // US-26: the strongest/weakest selection, the evidence rule, ties, and every insufficient-data state.
@@ -200,5 +202,51 @@ describe("insufficient data", () => {
     expect(strengthMessage("no_evidence", 0)).toBe("You skipped every topic and have no recorded practice, so there is nothing to compare yet.");
     expect(strengthMessage("too_few", 1)).toBe("Only 1 topic has a rating or recorded practice. At least 2 are needed to compare.");
     expect(strengthMessage("level", 3)).toBe("Your 3 topics with a rating or recorded practice are level so far, so none stands out as strongest or weakest.");
+  });
+});
+
+describe("getTopicStrengths", () => {
+  let errors: ReturnType<typeof vi.spyOn>;
+  const logged = () => errors.mock.calls.map(call => JSON.parse(String(call[0])));
+  const row = (topicKey: string, weakness: number, confidence: number | null = 3) => ({ topicKey, topic: topicKey, weakness, confidence, baselineWeakness: null, correctCount: 0, incorrectCount: 0 });
+  beforeEach(() => {
+    errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    // Newest first, as the query orders them: "Tcp " is the newest writing of the TCP topic.
+    courseFile.findMany.mockReset().mockResolvedValue([{ topic: "Tcp " }, { topic: "Secret Routing" }, { topic: "TCP" }, { topic: "  " }]);
+    learningTopic.findMany.mockReset().mockResolvedValue([row("tcp", 0.9), row("secret routing", 0.1)]);
+  });
+
+  it("reads this student's profile in this course and the course's published exam topics only", async () => {
+    const result = await getTopicStrengths("student-1", "course-a");
+    expect(learningTopic.findMany.mock.calls[0][0].where).toEqual({ userId: "student-1", courseId: "course-a" });
+    expect(courseFile.findMany.mock.calls[0][0].where).toMatchObject({ courseId: "course-a", category: "EXAM", status: "PUBLISHED" });
+    expect(result.state).toBe("ok");
+    // The topic is named as the newest paper writes it, and its frequency is its number of papers.
+    expect(result.weakest).toMatchObject([{ topicKey: "tcp", topic: "Tcp", paperCount: 2 }]);
+    expect(result.strongest).toMatchObject([{ topicKey: "secret routing", paperCount: 1 }]);
+    expect(logged()).toEqual([]);
+  });
+  it("logs a failed read once with IDs, the failed read, and the error type, never a topic, and rethrows", async () => {
+    class DatabaseDown extends Error { name = "DatabaseDown"; }
+    courseFile.findMany.mockRejectedValue(new DatabaseDown("could not read Secret Routing"));
+    await expect(getTopicStrengths("student-1", "course-a")).rejects.toThrow(DatabaseDown);
+    const lines = logged().filter(line => line.event === "topic_strengths_retrieval_failed");
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({ level: "error", userId: "student-1", courseId: "course-a", source: "course_topics", errorType: "DatabaseDown" });
+    expect(JSON.stringify(logged())).not.toMatch(/secret|routing|tcp/i);
+
+    errors.mockClear();
+    courseFile.findMany.mockResolvedValue([{ topic: "TCP" }]);
+    learningTopic.findMany.mockRejectedValue(new DatabaseDown("could not read Secret Routing"));
+    await expect(getTopicStrengths("student-1", "course-a")).rejects.toThrow(DatabaseDown);
+    expect(logged().filter(line => line.event === "topic_strengths_retrieval_failed")).toMatchObject([{ source: "profile", errorType: "DatabaseDown" }]);
+    expect(JSON.stringify(logged())).not.toMatch(/secret|routing|tcp/i);
+  });
+  it("logs invalid stored weaknesses once per read, as a count", async () => {
+    learningTopic.findMany.mockResolvedValue([row("tcp", 7), row("secret routing", Number.NaN)]);
+    const result = await getTopicStrengths("student-1", "course-a");
+    expect(result.state).toBe("no_evidence");
+    expect(logged()).toMatchObject([{ event: "topic_strengths_invalid_data", level: "warn", userId: "student-1", courseId: "course-a", invalidTopics: "2" }]);
+    expect(JSON.stringify(logged())).not.toMatch(/secret|routing|tcp/i);
   });
 });
